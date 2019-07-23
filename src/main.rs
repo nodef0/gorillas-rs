@@ -1,8 +1,8 @@
 use quicksilver::{
-    geom::{Circle, Rectangle, Shape, Transform, Vector},
+    geom::{Circle, Line, Rectangle, Shape, Transform, Vector},
     graphics::{
         Background::{Col, Img},
-        Color, Font, FontStyle, Image, PixelFormat,
+        Color, Font, FontStyle, Image, PixelFormat, View,
     },
     input::{ButtonState, MouseButton},
     lifecycle::{run, Asset, Event, Settings, State, Window},
@@ -27,25 +27,51 @@ const WINDOW_X: u32 = 800;
 const WINDOW_Y: u32 = 600;
 
 const DELTAT_MS: f32 = 16.667;
-// 9.81 m/s^2 * DELTA_MS
 const GRAVITY: f32 = 0.00835;
 
 const GORILLA_SIZE: (f32, f32) = (40.0, 60.0);
 const SHOT_RADIUS: f32 = 10.0;
 
+const EXPLOSION_FRAMES: u32 = 12;
+const EXPLOSION_SIZE: (u32, u32) = (96, 96);
+const EXPLOSION_HALF_VEC: Vector = Vector { x: 48.0, y: 48.0 };
+
+const JUICE_COUNTER: f32 = 0.5;
+
+const START_OFFSET: f32 = 60.0;
+const END_OFFSET: f32 = 80.0;
+
+struct Round {
+    buildings: Vec<(Rectangle, Color, Option<Vec<Rectangle>>)>,
+    gorilla_left: Rectangle,
+    gorilla_right: Rectangle,
+}
+
+struct Explosion {
+    pos: Vector,
+    frame: u32,
+}
+
+struct Juice {
+    counter: f32,
+}
+
 struct Game {
+    round: Round,
     counting: bool,
     counter: i32,
     sky: Image,
+    explosion: RefCell<Asset<Image>>,
+    explosion_state: Option<Explosion>,
     font: RefCell<Asset<Font>>,
     font_style: FontStyle,
-    buildings: Vec<(Rectangle, Color)>,
-    gorilla_left: Rectangle,
-    gorilla_right: Rectangle,
     shot: Option<(Circle, Vector)>, // pos, speed
     turn: Side,
     points_left: u32,
     points_right: u32,
+    new_game: bool,
+    view: Rectangle,
+    juice: Option<Juice>,
 }
 
 fn cut(start: &[u8], end: &[u8], out: &mut [u8]) {
@@ -68,7 +94,7 @@ fn gen_cuts(times: u32, start: &[u8], end: &[u8]) -> Vec<u8> {
     }
 }
 
-fn buildings() -> Vec<(Rectangle, Color)> {
+fn buildings() -> Vec<(Rectangle, Color, Option<Vec<Rectangle>>)> {
     let mut b = vec![];
     let mut rng = rand::thread_rng();
     let mut last_x = 0;
@@ -79,6 +105,7 @@ fn buildings() -> Vec<(Rectangle, Color)> {
         b.push((
             Rectangle::new((last_x, height), (width - 2, WINDOW_Y - height)),
             Color::from_rgba(color[0], color[1], color[2], 1.0),
+            None,
         ));
         last_x += width;
         if last_x > WINDOW_X {
@@ -111,7 +138,10 @@ fn next_side(side: &Side) -> Side {
 
 const DISTANCE_MIN: usize = 2;
 
-fn place_gorilla(side: Side, buildings: &[(Rectangle, Color)]) -> Rectangle {
+fn place_gorilla(
+    side: Side,
+    buildings: &[(Rectangle, Color, Option<Vec<Rectangle>>)],
+) -> Rectangle {
     let field_length = buildings.len() - 1;
     let mut rng = rand::thread_rng();
     let i = match side {
@@ -131,7 +161,7 @@ fn place_gorilla(side: Side, buildings: &[(Rectangle, Color)]) -> Rectangle {
 enum Collision {
     None,
     Sky,
-    Building(usize),
+    Buildings(Vec<usize>),
     Player(Side),
 }
 
@@ -139,35 +169,89 @@ fn collide_field(pos: Vector) -> bool {
     pos.x > WINDOW_X as f32 || pos.y > WINDOW_Y as f32 || pos.x < 0.0 // || pos.y < 0.0 => shot can go upwards the screen and come back
 }
 
-fn collide_buildings(circle: Circle, buildings: &[(Rectangle, Color)]) -> Option<usize> {
-    for (i, (rect, _)) in buildings.iter().enumerate() {
-        if circle.overlaps(rect) {
-            return Some(i);
+fn remove_parts(circle: Circle, parts: &mut Vec<Rectangle>) {
+    parts.retain(|x| !circle.overlaps(x));
+}
+
+fn collide_shot(
+    circle: Circle,
+    buildings: &[(Rectangle, Color, Option<Vec<Rectangle>>)],
+) -> Vec<usize> {
+    let mut v = vec![];
+    for (i, (rect, _, parts)) in buildings.iter().enumerate() {
+        match parts {
+            None => {
+                if circle.overlaps(rect) {
+                    v.push(i);
+                }
+            }
+            Some(xs) => {
+                for x in xs {
+                    if circle.overlaps(x) {
+                        v.push(i);
+                        break;
+                    }
+                }
+            }
         }
     }
-    None
+    v
 }
 
 fn collide_player(circle: Circle, player: &Rectangle) -> bool {
     circle.overlaps(player)
 }
 
+const PARTS_GRID_MIN: f32 = 4.0;
+const PARTS_GRID_STEP: f32 = 2.0;
+
+fn create_parts(circle: Circle, source: &Rectangle) -> Vec<Rectangle> {
+    let mut rng = rand::thread_rng();
+    let mut v = vec![];
+    let mut pos_y = source.pos.y;
+    let total_x = source.pos.x + source.size.x;
+    loop {
+        let height = PARTS_GRID_MIN + rng.gen_range(0, 3) as f32 * PARTS_GRID_STEP;
+        let mut pos_x = source.pos.x;
+        loop {
+            let width = PARTS_GRID_MIN + rng.gen_range(0, 3) as f32 * PARTS_GRID_STEP;
+            if pos_x + width > total_x {
+                v.push(Rectangle::new((pos_x, pos_y), (total_x - pos_x, height)));
+            } else {
+                v.push(Rectangle::new((pos_x, pos_y), (width, height)));
+            }
+            pos_x += width;
+            if pos_x > source.pos.x + source.size.x {
+                break;
+            }
+        }
+        pos_y += height;
+        if pos_y > source.pos.y + source.size.y {
+            break;
+        }
+    }
+    v.retain(|x| !circle.overlaps(x));
+    v
+}
+
 impl Game {
     fn gorilla_from_side(&self, side: &Side) -> &Rectangle {
         match side {
-            Side::Left => &self.gorilla_left,
-            Side::Right => &self.gorilla_right,
+            Side::Left => &self.round.gorilla_left,
+            Side::Right => &self.round.gorilla_right,
         }
     }
 
     fn collision(&self, circle: Circle) -> Collision {
-        if collide_field(circle.pos) {
+        let hits = collide_shot(circle, &self.round.buildings);
+        if !hits.is_empty() {
+            let explosion = Circle::new(circle.pos, circle.radius * 4.0);
+            Collision::Buildings(collide_shot(explosion, &self.round.buildings))
+        } else if collide_field(circle.pos) {
             Collision::Sky
-        } else if let Some(i) = collide_buildings(circle, &self.buildings) {
-            Collision::Building(i)
-        } else if collide_player(circle, &self.gorilla_left) {
+        } else if collide_player(circle, &self.round.gorilla_left) {
             Collision::Player(Side::Left)
-        } else if collide_player(circle, &self.gorilla_right) {
+        } else if collide_player(circle, &self.round.gorilla_right) {
             Collision::Player(Side::Right)
         } else {
             Collision::None
@@ -175,49 +259,68 @@ impl Game {
     }
 }
 
-impl State for Game {
-    fn new() -> Result<Game> {
-        let sky_vec = gen_cuts(SKY_CUTS, &SKY_BLUE_DARK, &SKY_BLUE_LIGHT);
+impl Round {
+    fn new() -> Self {
         let buildings = buildings();
         let gorilla_left = place_gorilla(Side::Left, &buildings);
         let gorilla_right = place_gorilla(Side::Right, &buildings);
-        let font = RefCell::new(Asset::new(Font::load("UI.ttf")));
-        Ok(Game {
-            counting: false,
-            counter: 0i32,
-            sky: Image::from_raw(&sky_vec, 1, (2 << (SKY_CUTS - 1)) - 1, PixelFormat::RGBA)?,
-            font,
-            font_style: FontStyle::new(64.0, Color::WHITE),
+        Round {
             buildings,
             gorilla_left,
             gorilla_right,
+        }
+    }
+}
+
+impl State for Game {
+    fn new() -> Result<Game> {
+        let sky_vec = gen_cuts(SKY_CUTS, &SKY_BLUE_DARK, &SKY_BLUE_LIGHT);
+        let font = RefCell::new(Asset::new(Font::load("UI.ttf")));
+        Ok(Game {
+            round: Round::new(),
+            counting: false,
+            counter: 0i32,
+            sky: Image::from_raw(&sky_vec, 1, (2 << (SKY_CUTS - 1)) - 1, PixelFormat::RGBA)?,
+            explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
+            explosion_state: None,
+            font,
+            font_style: FontStyle::new(64.0, Color::WHITE),
             shot: None,
             turn: Side::Left,
             points_left: 0,
             points_right: 0,
+            new_game: false,
+            view: Rectangle::new_sized((800, 600)),
+            juice: None,
         })
     }
 
     fn draw(&mut self, window: &mut Window) -> Result<()> {
-        window.clear(Color::WHITE)?;
+        window.clear(Color::BLACK)?;
         window.draw_ex(
             &Rectangle::new((0, 0), window.screen_size()),
             Img(&self.sky),
             Transform::IDENTITY,
             0.0,
         );
-        for b in self.buildings.iter() {
-            window.draw_ex(&b.0, b.1, Transform::IDENTITY, 1.0);
+        for b in self.round.buildings.iter() {
+            if let Some(ref parts) = b.2 {
+                for p in parts {
+                    window.draw_ex(p, b.1, Transform::IDENTITY, 1.0);
+                }
+            } else {
+                window.draw_ex(&b.0, b.1, Transform::IDENTITY, 1.0);
+            }
         }
         // draw gorillas
         window.draw_ex(
-            &self.gorilla_left,
+            &self.round.gorilla_left,
             Col(Color::RED),
             Transform::IDENTITY,
             2.0,
         );
         window.draw_ex(
-            &self.gorilla_right,
+            &self.round.gorilla_right,
             Col(Color::RED),
             Transform::IDENTITY,
             2.0,
@@ -226,6 +329,18 @@ impl State for Game {
         // draw shot
         if let Some((circle, _)) = self.shot {
             window.draw_ex(&circle, Col(Color::YELLOW), Transform::IDENTITY, 3.0);
+        } else if !self.new_game {
+            let gorilla = self.gorilla_from_side(&self.turn);
+            let center = gorilla.pos + (gorilla.size / 2);
+            let dir = (window.mouse().pos() - center).normalize();
+
+            window.draw_ex(
+                &Line::new(center + (dir * START_OFFSET), center + (dir * END_OFFSET))
+                    .with_thickness(4.0),
+                Col(Color::YELLOW),
+                Transform::IDENTITY,
+                4.0,
+            );
         }
 
         // draw power bar
@@ -235,6 +350,21 @@ impl State for Game {
             Transform::IDENTITY,
             3.0,
         );
+
+        self.explosion.borrow_mut().execute(|img| {
+            if let Some(ref explosion) = self.explosion_state {
+                window.draw_ex(
+                    &Rectangle::new(explosion.pos, EXPLOSION_SIZE),
+                    Img(&img.subimage(Rectangle::new(
+                        (96 * (explosion.frame / 2), 0),
+                        EXPLOSION_SIZE,
+                    ))),
+                    Transform::IDENTITY,
+                    4.0,
+                );
+            }
+            Ok(())
+        })?;
 
         self.font.borrow_mut().execute(|f| {
             if let Ok(ref text) = f.render(
@@ -263,13 +393,11 @@ impl State for Game {
             (Event::MouseButton(MouseButton::Left, ButtonState::Released), true, None) => {
                 self.counting = false;
                 let gorilla = self.gorilla_from_side(&self.turn);
-                let dir = window.mouse().pos() - gorilla.pos;
+                let center = gorilla.pos + (gorilla.size / 2);
+                let dir = (window.mouse().pos() - center).normalize();
                 self.shot = Some((
-                    Circle::new(
-                        gorilla.pos + Vector::new(gorilla.size.x / 2.0, -SHOT_RADIUS),
-                        SHOT_RADIUS,
-                    ),
-                    dir.normalize() * 0.006 * self.counter as f32,
+                    Circle::new(center + dir * 4 * SHOT_RADIUS, SHOT_RADIUS),
+                    dir * 0.006 * self.counter as f32,
                 ));
                 self.turn = next_side(&self.turn);
             }
@@ -278,17 +406,70 @@ impl State for Game {
         Ok(())
     }
 
-    fn update(&mut self, _window: &mut Window) -> Result<()> {
+    fn update(&mut self, window: &mut Window) -> Result<()> {
+        if let Some(ref mut state) = self.explosion_state {
+            if state.frame / 2 == EXPLOSION_FRAMES {
+                self.explosion_state = None;
+                if self.new_game {
+                    self.round = Round::new();
+                    self.new_game = false;
+                    return Ok(());
+                }
+            } else {
+                state.frame += 1;
+            }
+        }
+
         if let Some((mut circle, prev_speed)) = self.shot {
             let (pos, speed) = update_shot(circle.pos, prev_speed);
             circle.pos = pos;
             match self.collision(circle) {
                 Collision::None => self.shot = Some((circle, speed)),
-                Collision::Player(Side::Left) => { self.points_right += 1; self.shot = None; },
-                Collision::Player(Side::Right) => { self.points_left += 1; self.shot = None; },
+                Collision::Player(side) => {
+                    match side {
+                        Side::Left => self.points_right += 1,
+                        Side::Right => self.points_left += 1,
+                    }
+                    self.shot = None;
+                    self.new_game = true;
+                    self.explosion_state = Some(Explosion {
+                        pos: pos - EXPLOSION_HALF_VEC,
+                        frame: 0,
+                    });
+                    self.juice = Some(Juice { counter: 0.0 });
+                }
+                Collision::Buildings(xs) => {
+                    let explosion = Circle::new(circle.pos, circle.radius * 4.0);
+                    for i in xs {
+                        let building = &mut self.round.buildings[i];
+                        match building.2 {
+                            None => building.2 = Some(create_parts(explosion, &building.0)),
+                            Some(ref mut parts) => remove_parts(explosion, parts),
+                        }
+                    }
+                    self.shot = None;
+                    self.explosion_state = Some(Explosion {
+                        pos: pos - EXPLOSION_HALF_VEC,
+                        frame: 0,
+                    });
+                    self.juice = Some(Juice { counter: 0.0 });
+                }
                 _ => self.shot = None,
             }
         }
+
+        if let Some(ref mut juice) = &mut self.juice {
+            juice.counter += JUICE_COUNTER;
+            let y = 10.0 * (-2.0 * juice.counter).exp2() * juice.counter.sin();
+            let x = 0.2 * (-2.0 * juice.counter).exp2() * juice.counter.sin();
+            self.view = Rectangle::new((x, y), (800, 600));
+            if self.view.pos.y.abs() < 0.01 {
+                self.juice = None;
+                self.view = Rectangle::new_sized((800, 600));
+            }
+            window.set_view(View::new(self.view));
+        }
+
         if self.counting {
             self.counter += 3;
         } else if self.counter > 0 {
