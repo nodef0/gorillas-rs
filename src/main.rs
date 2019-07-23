@@ -233,6 +233,15 @@ impl Game {
             Collision::None
         }
     }
+
+    fn on_explode(&mut self, pos: Vector) {
+        self.shot = None;
+        self.explosion_state = Some(Explosion {
+            pos: pos - EXPLOSION_HALF_VEC,
+            frame: 0,
+        });
+        self.juice = Some(0.0);
+    }
 }
 
 impl State for Game {
@@ -258,12 +267,16 @@ impl State for Game {
 
     fn draw(&mut self, window: &mut Window) -> Result<()> {
         window.clear(Color::BLACK)?;
+        
+        // draw sky
         window.draw_ex(
             &Rectangle::new((0, 0), window.screen_size()),
             Img(&self.sky),
             Transform::IDENTITY,
             0.0,
         );
+
+        //draw buildings
         for b in self.round.buildings.iter() {
             if let Some(ref parts) = b.2 {
                 for p in parts {
@@ -273,6 +286,7 @@ impl State for Game {
                 window.draw_ex(&b.0, b.1, Transform::IDENTITY, 1.0);
             }
         }
+
         // draw gorillas
         window.draw_ex(
             &self.round.gorilla_left,
@@ -291,10 +305,10 @@ impl State for Game {
         if let Some((circle, _)) = self.shot {
             window.draw_ex(&circle, Col(Color::YELLOW), Transform::IDENTITY, 3.0);
         } else if !self.new_game {
+            // draw aim
             let gorilla = self.gorilla_from_side(&self.turn);
             let center = gorilla.pos + (gorilla.size / 2);
             let dir = (window.mouse().pos() - center).normalize();
-
             window.draw_ex(
                 &Line::new(center + (dir * START_OFFSET), center + (dir * END_OFFSET))
                     .with_thickness(4.0),
@@ -312,6 +326,7 @@ impl State for Game {
             3.0,
         );
 
+        // draw explosion frame
         self.explosion.borrow_mut().execute(|img| {
             if let Some(ref explosion) = self.explosion_state {
                 window.draw_ex(
@@ -327,6 +342,7 @@ impl State for Game {
             Ok(())
         })?;
 
+        //draw score
         self.font.borrow_mut().execute(|f| {
             if let Ok(ref text) = f.render(
                 &format!("{:02} {:02}", self.points_left, self.points_right),
@@ -391,13 +407,8 @@ impl State for Game {
                         Side::Left => self.points_right += 1,
                         Side::Right => self.points_left += 1,
                     }
-                    self.shot = None;
+                    self.on_explode(pos);
                     self.new_game = true;
-                    self.explosion_state = Some(Explosion {
-                        pos: pos - EXPLOSION_HALF_VEC,
-                        frame: 0,
-                    });
-                    self.juice = Some(0.0);
                 }
                 Collision::Buildings(xs) => {
                     let explosion = Circle::new(circle.pos, circle.radius * 4.0);
@@ -408,12 +419,7 @@ impl State for Game {
                             Some(ref mut parts) => remove_parts(explosion, parts),
                         }
                     }
-                    self.shot = None;
-                    self.explosion_state = Some(Explosion {
-                        pos: pos - EXPLOSION_HALF_VEC,
-                        frame: 0,
-                    });
-                    self.juice = Some(0.0);
+                    self.on_explode(pos);
                 }
                 _ => self.shot = None,
             }
