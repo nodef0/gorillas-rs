@@ -25,4 +25,3 @@ pub const START_OFFSET: f32 = 60.0;
 pub const END_OFFSET: f32 = 80.0;
 pub const DISTANCE_MIN: usize = 2;
 pub const PARTS_GRID_MIN: f32 = 4.0;
-pub const PARTS_GRID_STEP: f32 = 2.0;

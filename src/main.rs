@@ -136,7 +136,15 @@ fn collide_field(pos: Vector) -> bool {
 }
 
 fn remove_parts(circle: Circle, parts: &mut Vec<Rectangle>) {
+    let overlap = parts
+        .iter()
+        .cloned()
+        .filter(|x| circle.overlaps(x))
+        .collect::<Vec<_>>();
     parts.retain(|x| !circle.overlaps(x));
+    for i in overlap {
+        parts.extend(create_parts(&circle, &i));
+    }
 }
 
 fn collide_shot(
@@ -168,33 +176,31 @@ fn collide_player(circle: Circle, player: &Rectangle) -> bool {
     circle.overlaps(player)
 }
 
-fn create_parts(circle: Circle, source: &Rectangle) -> Vec<Rectangle> {
-    let mut rng = rand::thread_rng();
-    let mut v = vec![];
-    let mut pos_y = source.pos.y;
-    let total_x = source.pos.x + source.size.x;
-    loop {
-        let height = PARTS_GRID_MIN + rng.gen_range(0, 3) as f32 * PARTS_GRID_STEP;
-        let mut pos_x = source.pos.x;
-        loop {
-            let width = PARTS_GRID_MIN + rng.gen_range(0, 3) as f32 * PARTS_GRID_STEP;
-            if pos_x + width > total_x {
-                v.push(Rectangle::new((pos_x, pos_y), (total_x - pos_x, height)));
+fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
+    let size = source.size / 2.0;
+    let rects = [
+        Rectangle::new((source.pos.x, source.pos.y), size),
+        Rectangle::new((source.pos.x + size.x, source.pos.y), size),
+        Rectangle::new((source.pos.x, source.pos.y + size.y), size),
+        Rectangle::new((source.pos.x + size.x, source.pos.y + size.y), size),
+    ];
+    if source.size.x < PARTS_GRID_MIN && source.size.y < PARTS_GRID_MIN {
+        rects
+            .iter()
+            .cloned()
+            .filter(|x| !circle.overlaps(x))
+            .collect::<Vec<_>>()
+    } else {
+        let mut v = vec![];
+        for r in rects.iter() {
+            if circle.overlaps(r) {
+                v.extend(create_parts(circle, r));
             } else {
-                v.push(Rectangle::new((pos_x, pos_y), (width, height)));
-            }
-            pos_x += width;
-            if pos_x > source.pos.x + source.size.x {
-                break;
+                v.push(*r);
             }
         }
-        pos_y += height;
-        if pos_y > source.pos.y + source.size.y {
-            break;
-        }
+        v
     }
-    v.retain(|x| !circle.overlaps(x));
-    v
 }
 
 impl Round {
@@ -267,7 +273,7 @@ impl State for Game {
 
     fn draw(&mut self, window: &mut Window) -> Result<()> {
         window.clear(Color::BLACK)?;
-        
+
         // draw sky
         window.draw_ex(
             &Rectangle::new((0, 0), window.screen_size()),
@@ -415,7 +421,7 @@ impl State for Game {
                     for i in xs {
                         let building = &mut self.round.buildings[i];
                         match building.2 {
-                            None => building.2 = Some(create_parts(explosion, &building.0)),
+                            None => building.2 = Some(create_parts(&explosion, &building.0)),
                             Some(ref mut parts) => remove_parts(explosion, parts),
                         }
                     }
