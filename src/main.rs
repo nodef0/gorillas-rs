@@ -53,7 +53,7 @@ enum Collision {
     None,
     Sky,
     Buildings(Vec<usize>),
-    Player(Side),
+    Player(Side, Vec<usize>),
 }
 
 fn cut(start: &[u8], end: &[u8], out: &mut [u8]) {
@@ -226,15 +226,17 @@ impl Game {
 
     fn collision(&self, circle: Circle) -> Collision {
         let hits = collide_shot(circle, &self.round.buildings);
+        let explosion = Circle::new(circle.pos, circle.radius * 4.0);
         if !hits.is_empty() {
-            let explosion = Circle::new(circle.pos, circle.radius * 4.0);
             Collision::Buildings(collide_shot(explosion, &self.round.buildings))
         } else if collide_field(circle.pos) {
             Collision::Sky
         } else if collide_player(circle, &self.round.gorilla_left) {
-            Collision::Player(Side::Left)
+            let terrain_damage = collide_shot(explosion, &self.round.buildings);
+            Collision::Player(Side::Left, terrain_damage)
         } else if collide_player(circle, &self.round.gorilla_right) {
-            Collision::Player(Side::Right)
+            let terrain_damage = collide_shot(explosion, &self.round.buildings);
+            Collision::Player(Side::Right, terrain_damage)
         } else {
             Collision::None
         }
@@ -247,6 +249,17 @@ impl Game {
             frame: 0,
         });
         self.juice = Some(0.0);
+    }
+
+    fn destroy_terrain(&mut self, circle: &Circle, xs: Vec<usize>) {
+        let explosion = Circle::new(circle.pos, circle.radius * 4.0);
+        for i in xs {
+            let building = &mut self.round.buildings[i];
+            match building.2 {
+                None => building.2 = Some(create_parts(&explosion, &building.0)),
+                Some(ref mut parts) => remove_parts(explosion, parts),
+            }
+        }
     }
 }
 
@@ -408,23 +421,17 @@ impl State for Game {
             circle.pos = pos;
             match self.collision(circle) {
                 Collision::None => self.shot = Some((circle, speed)),
-                Collision::Player(side) => {
+                Collision::Player(side, xs) => {
                     match side {
                         Side::Left => self.points_right += 1,
                         Side::Right => self.points_left += 1,
                     }
+                    self.destroy_terrain(&circle, xs);
                     self.on_explode(pos);
                     self.new_game = true;
                 }
                 Collision::Buildings(xs) => {
-                    let explosion = Circle::new(circle.pos, circle.radius * 4.0);
-                    for i in xs {
-                        let building = &mut self.round.buildings[i];
-                        match building.2 {
-                            None => building.2 = Some(create_parts(&explosion, &building.0)),
-                            Some(ref mut parts) => remove_parts(explosion, parts),
-                        }
-                    }
+                    self.destroy_terrain(&circle, xs);
                     self.on_explode(pos);
                 }
                 _ => self.shot = None,
