@@ -7,14 +7,13 @@ use quicksilver::{
         Background::{Col, Img},
         Color, Font, FontStyle, Image, PixelFormat, View,
     },
-    input::{ButtonState, MouseButton},
+    input::{ButtonState, Key, MouseButton},
     lifecycle::{run, Asset, Event, Settings, State, Window},
     Result,
 };
 
 use rand::prelude::*;
-use std::cell::RefCell;
-use std::cmp;
+use std::{cell::RefCell, cmp};
 
 struct Round {
     buildings: Vec<(Rectangle, Color, Option<Vec<Rectangle>>)>,
@@ -34,14 +33,18 @@ struct Game {
     sky: Image,
     explosion: RefCell<Asset<Image>>,
     explosion_state: Option<Explosion>,
-    font: RefCell<Asset<Font>>,
-    font_style: FontStyle,
     shot: Option<(Circle, Vector)>,
     turn: Side,
     points_left: u32,
     points_right: u32,
     new_game: bool,
     juice: Option<f32>,
+    mouse_pos: Vector,
+}
+
+struct SharedAssets {
+    font: RefCell<Asset<Font>>,
+    font_style: FontStyle,
 }
 
 enum Side {
@@ -54,6 +57,96 @@ enum Collision {
     Sky,
     Buildings(Vec<usize>),
     Player(Side, Vec<usize>),
+}
+
+struct Menu;
+
+impl Menu {
+    fn new() -> Result<Menu> {
+        Ok(Menu)
+    }
+
+    fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
+        shared.font.borrow_mut().execute(|f| {
+            if let Ok(ref text) = f.render("PAUSED", &shared.font_style) {
+                window.draw_ex(
+                    &text.area().with_center((WINDOW_X / 2, WINDOW_Y / 2)),
+                    Img(text),
+                    Transform::IDENTITY,
+                    4.0,
+                );
+            } else {
+                eprintln!("Failed to render menu")
+            }
+            Ok(())
+        })
+    }
+
+    fn event(&mut self, _event: &Event, _window: &mut Window) -> Result<()> {
+        Ok(())
+    }
+
+    fn update(&mut self, _window: &mut Window) -> Result<()> {
+        Ok(())
+    }
+}
+
+enum Focus {
+    FocusGame,
+    FocusMenu,
+}
+
+struct States {
+    shared_assets: SharedAssets,
+    focus: Focus,
+    game: Game,
+    menu: Menu,
+}
+
+impl State for States {
+    fn new() -> Result<States> {
+        Ok(States {
+            shared_assets: SharedAssets {
+                font: RefCell::new(Asset::new(Font::load("UI.ttf"))),
+                font_style: FontStyle::new(64.0, Color::WHITE),
+            },
+            focus: Focus::FocusGame,
+            game: Game::new()?,
+            menu: Menu::new()?,
+        })
+    }
+
+    fn draw(&mut self, window: &mut Window) -> Result<()> {
+        match self.focus {
+            Focus::FocusGame => self.game.draw(&self.shared_assets, window),
+            Focus::FocusMenu => {
+                self.game.draw(&self.shared_assets, window)?;
+                self.menu.draw(&self.shared_assets, window)
+            }
+        }
+    }
+
+    fn event(&mut self, event: &Event, window: &mut Window) -> Result<()> {
+        match (event, &self.focus) {
+            (Event::Key(Key::Escape, ButtonState::Pressed), Focus::FocusGame) => {
+                self.focus = Focus::FocusMenu;
+                Ok(())
+            }
+            (Event::Key(Key::Escape, ButtonState::Pressed), Focus::FocusMenu) => {
+                self.focus = Focus::FocusGame;
+                Ok(())
+            }
+            (_, Focus::FocusGame) => self.game.event(event, window),
+            (_, Focus::FocusMenu) => self.menu.event(event, window),
+        }
+    }
+
+    fn update(&mut self, window: &mut Window) -> Result<()> {
+        match self.focus {
+            Focus::FocusGame => self.game.update(window),
+            Focus::FocusMenu => self.menu.update(window),
+        }
+    }
 }
 
 fn cut(start: &[u8], end: &[u8], out: &mut [u8]) {
@@ -208,6 +301,7 @@ impl Round {
         let buildings = buildings();
         let gorilla_left = place_gorilla(Side::Left, &buildings);
         let gorilla_right = place_gorilla(Side::Right, &buildings);
+
         Round {
             buildings,
             gorilla_left,
@@ -217,6 +311,25 @@ impl Round {
 }
 
 impl Game {
+    fn new() -> Result<Self> {
+        let sky_vec = gen_cuts(SKY_CUTS, &SKY_BLUE_DARK, &SKY_BLUE_LIGHT);
+        let sky = Image::from_raw(&sky_vec, 1, (2 << (SKY_CUTS - 1)) - 1, PixelFormat::RGBA)?;
+        Ok(Game {
+            round: Round::new(),
+            counting: false,
+            counter: 0i32,
+            sky,
+            explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
+            explosion_state: None,
+            shot: None,
+            turn: Side::Left,
+            points_left: 0,
+            points_right: 0,
+            new_game: false,
+            juice: None,
+            mouse_pos: Vector::ZERO,
+        })
+    }
     fn gorilla_from_side(&self, side: &Side) -> &Rectangle {
         match side {
             Side::Left => &self.round.gorilla_left,
@@ -261,30 +374,8 @@ impl Game {
             }
         }
     }
-}
 
-impl State for Game {
-    fn new() -> Result<Game> {
-        let sky_vec = gen_cuts(SKY_CUTS, &SKY_BLUE_DARK, &SKY_BLUE_LIGHT);
-        Ok(Game {
-            round: Round::new(),
-            counting: false,
-            counter: 0i32,
-            sky: Image::from_raw(&sky_vec, 1, (2 << (SKY_CUTS - 1)) - 1, PixelFormat::RGBA)?,
-            explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
-            explosion_state: None,
-            font: RefCell::new(Asset::new(Font::load("UI.ttf"))),
-            font_style: FontStyle::new(64.0, Color::WHITE),
-            shot: None,
-            turn: Side::Left,
-            points_left: 0,
-            points_right: 0,
-            new_game: false,
-            juice: None,
-        })
-    }
-
-    fn draw(&mut self, window: &mut Window) -> Result<()> {
+    fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
         window.clear(Color::BLACK)?;
 
         // draw sky
@@ -327,7 +418,7 @@ impl State for Game {
             // draw aim
             let gorilla = self.gorilla_from_side(&self.turn);
             let center = gorilla.pos + (gorilla.size / 2);
-            let dir = (window.mouse().pos() - center).normalize();
+            let dir = (self.mouse_pos - center).normalize();
             window.draw_ex(
                 &Line::new(center + (dir * START_OFFSET), center + (dir * END_OFFSET))
                     .with_thickness(4.0),
@@ -362,10 +453,10 @@ impl State for Game {
         })?;
 
         //draw score
-        self.font.borrow_mut().execute(|f| {
+        shared.font.borrow_mut().execute(|f| {
             if let Ok(ref text) = f.render(
                 &format!("{:02} {:02}", self.points_left, self.points_right),
-                &self.font_style,
+                &shared.font_style,
             ) {
                 window.draw_ex(
                     &text.area().with_center((WINDOW_X / 2, 100)),
@@ -383,6 +474,7 @@ impl State for Game {
 
     fn event(&mut self, event: &Event, window: &mut Window) -> Result<()> {
         match (event, self.counting, self.shot) {
+            (Event::MouseMoved(pos), _, _) => self.mouse_pos = *pos,
             (Event::MouseButton(MouseButton::Left, ButtonState::Pressed), false, None) => {
                 self.counting = true;
             }
@@ -464,5 +556,5 @@ impl State for Game {
 }
 
 fn main() {
-    run::<Game>("Gorillas-rs", Vector::new(800, 600), Settings::default());
+    run::<States>("Gorillas-rs", Vector::new(800, 600), Settings::default());
 }
