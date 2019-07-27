@@ -44,7 +44,8 @@ struct Game {
 
 struct SharedAssets {
     font: RefCell<Asset<Font>>,
-    font_style: FontStyle,
+    default_style: FontStyle,
+    hoover_style: FontStyle,
 }
 
 enum Side {
@@ -59,48 +60,171 @@ enum Collision {
     Player(Side, Vec<usize>),
 }
 
-struct Menu;
+struct PauseMenu;
 
-impl Menu {
-    fn new() -> Result<Menu> {
-        Ok(Menu)
-    }
-
+impl PauseMenu {
     fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
         shared.font.borrow_mut().execute(|f| {
-            if let Ok(ref text) = f.render("PAUSED", &shared.font_style) {
+            if let Ok(ref text) = f.render("PAUSED", &shared.default_style) {
                 window.draw_ex(
-                    &text.area().with_center((WINDOW_X / 2, WINDOW_Y / 2)),
+                    &text.area().with_center(CENTER),
                     Img(text),
                     Transform::IDENTITY,
                     4.0,
                 );
             } else {
-                eprintln!("Failed to render menu")
+                eprintln!("Failed to render pause menu")
             }
             Ok(())
         })
     }
+}
 
-    fn event(&mut self, _event: &Event, _window: &mut Window) -> Result<()> {
-        Ok(())
+#[derive(Copy, Clone)]
+enum Hoover {
+    None,
+    Left,
+    Right,
+    Play,
+}
+
+struct MainMenu {
+    dirty: bool,
+    bot_right: bool,
+    bot_left: bool,
+    hoover: Hoover,
+    areas: Vec<(Rectangle, Hoover)>,
+}
+
+fn select(is_bot: bool) -> &'static str {
+    if is_bot {
+        "Gorilla"
+    } else {
+        "Human"
+    }
+}
+
+impl MainMenu {
+    fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
+        window.clear(Color::BLACK)?;
+        shared.font.borrow_mut().execute(|f| {
+            let mut draw_at_center = |s, center, style| -> Option<Rectangle> {
+                if let Ok(ref text) = f.render(s, style) {
+                    let rect = text.area().with_center(center);
+                    window.draw_ex(&rect, Img(text), Transform::IDENTITY, 1.0);
+                    Some(rect)
+                } else {
+                    eprintln!("Failed to render: {}", s);
+                    None
+                }
+            };
+
+            let (left, right, play) = match self.hoover {
+                Hoover::Left => (
+                    &shared.hoover_style,
+                    &shared.default_style,
+                    &shared.default_style,
+                ),
+                Hoover::Right => (
+                    &shared.default_style,
+                    &shared.hoover_style,
+                    &shared.default_style,
+                ),
+                Hoover::Play => (
+                    &shared.default_style,
+                    &shared.default_style,
+                    &shared.hoover_style,
+                ),
+                _ => (
+                    &shared.default_style,
+                    &shared.default_style,
+                    &shared.default_style,
+                ),
+            };
+
+            draw_at_center(
+                TITLE,
+                (WINDOW_X / 2.0, WINDOW_Y / 4.0),
+                &shared.default_style,
+            );
+
+            let area_left = draw_at_center(
+                select(self.bot_left),
+                (WINDOW_X / 4.0, WINDOW_Y / 2.0),
+                left,
+            );
+            let area_right = draw_at_center(
+                select(self.bot_right),
+                (WINDOW_X * 3.0 / 4.0, WINDOW_Y / 2.0),
+                right,
+            );
+            let area_play = draw_at_center(PLAY, (WINDOW_X / 2.0, WINDOW_Y * 3.0 / 4.0), play);
+
+            if self.dirty {
+                if let (Some(area_left), Some(area_right), Some(area_play)) =
+                    (area_left, area_right, area_play)
+                {
+                    self.areas = vec![
+                        (area_left, Hoover::Left),
+                        (area_right, Hoover::Right),
+                        (area_play, Hoover::Play),
+                    ]
+                }
+                self.dirty = false;
+            }
+
+            Ok(())
+        })
     }
 
-    fn update(&mut self, _window: &mut Window) -> Result<()> {
-        Ok(())
+    fn event_hoover(&mut self, pos: Vector) {
+        self.hoover = Hoover::None;
+        for (area, id) in self.areas.iter() {
+            if area.contains(pos) {
+                self.hoover = *id;
+                break;
+            }
+        }
+    }
+
+    fn event(&mut self, event: &Event, _window: &mut Window) -> bool {
+        match event {
+            Event::MouseMoved(pos) => {
+                self.event_hoover(*pos);
+                false
+            }
+            Event::MouseButton(MouseButton::Left, ButtonState::Pressed) => {
+                self.dirty = true;
+                match self.hoover {
+                    Hoover::Left => {
+                        self.bot_left = !self.bot_left;
+                        false
+                    }
+                    Hoover::Right => {
+                        self.bot_right = !self.bot_right;
+                        false
+                    }
+                    Hoover::Play => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 }
 
 enum Focus {
-    FocusGame,
-    FocusMenu,
+    Main,
+    Game,
+    Pause,
 }
 
 struct States {
     shared_assets: SharedAssets,
     focus: Focus,
     game: Game,
-    menu: Menu,
+    pause_menu: PauseMenu,
+    main_menu: MainMenu,
 }
 
 impl State for States {
@@ -108,43 +232,71 @@ impl State for States {
         Ok(States {
             shared_assets: SharedAssets {
                 font: RefCell::new(Asset::new(Font::load("UI.ttf"))),
-                font_style: FontStyle::new(64.0, Color::WHITE),
+                default_style: FontStyle::new(64.0, Color::WHITE),
+                hoover_style: FontStyle::new(64.0, Color::RED),
             },
-            focus: Focus::FocusGame,
+            focus: Focus::Main,
             game: Game::new()?,
-            menu: Menu::new()?,
+            pause_menu: PauseMenu,
+            main_menu: MainMenu {
+                bot_left: false,
+                bot_right: false,
+                dirty: true,
+                hoover: Hoover::None,
+                areas: vec![],
+            },
         })
     }
 
     fn draw(&mut self, window: &mut Window) -> Result<()> {
         match self.focus {
-            Focus::FocusGame => self.game.draw(&self.shared_assets, window),
-            Focus::FocusMenu => {
+            Focus::Main => self.main_menu.draw(&self.shared_assets, window),
+            Focus::Game => self.game.draw(&self.shared_assets, window),
+            Focus::Pause => {
                 self.game.draw(&self.shared_assets, window)?;
-                self.menu.draw(&self.shared_assets, window)
+                self.pause_menu.draw(&self.shared_assets, window)
             }
         }
     }
 
     fn event(&mut self, event: &Event, window: &mut Window) -> Result<()> {
         match (event, &self.focus) {
-            (Event::Key(Key::Escape, ButtonState::Pressed), Focus::FocusGame) => {
-                self.focus = Focus::FocusMenu;
+            // main menu
+            (Event::Key(Key::Return, ButtonState::Pressed), Focus::Main) => {
+                self.game = Game::new()?;
+                self.focus = Focus::Game;
                 Ok(())
             }
-            (Event::Key(Key::Escape, ButtonState::Pressed), Focus::FocusMenu) => {
-                self.focus = Focus::FocusGame;
+            (_, Focus::Main) => {
+                if self.main_menu.event(event, window) {
+                    self.game = Game::new()?;
+                    self.focus = Focus::Game;
+                }
                 Ok(())
             }
-            (_, Focus::FocusGame) => self.game.event(event, window),
-            (_, Focus::FocusMenu) => self.menu.event(event, window),
+            // pause
+            (Event::Key(Key::Space, ButtonState::Pressed), Focus::Pause) => {
+                self.focus = Focus::Game;
+                Ok(())
+            }
+            // game
+            (Event::Key(Key::Escape, ButtonState::Pressed), Focus::Game) => {
+                self.focus = Focus::Main;
+                Ok(())
+            }
+            (Event::Key(Key::Space, ButtonState::Pressed), Focus::Game) => {
+                self.focus = Focus::Pause;
+                Ok(())
+            }
+            (_, Focus::Game) => self.game.event(event, window),
+            _ => Ok(()),
         }
     }
 
     fn update(&mut self, window: &mut Window) -> Result<()> {
         match self.focus {
-            Focus::FocusGame => self.game.update(window),
-            Focus::FocusMenu => self.menu.update(window),
+            Focus::Game => self.game.update(window),
+            _ => Ok(()),
         }
     }
 }
@@ -178,12 +330,12 @@ fn buildings() -> Vec<(Rectangle, Color, Option<Vec<Rectangle>>)> {
         let width = 60 + 5 * rng.gen_range(0, 5);
         let color = BUILD_PALETTE[rng.gen_range(0, 4)];
         b.push((
-            Rectangle::new((last_x, height), (width - 2, WINDOW_Y - height)),
+            Rectangle::new((last_x, height), (width - 2, WINDOW_Y as u32 - height)),
             Color::from_rgba(color[0], color[1], color[2], 1.0),
             None,
         ));
         last_x += width;
-        if last_x > WINDOW_X {
+        if last_x > WINDOW_X as u32 {
             break;
         }
     }
@@ -225,7 +377,7 @@ fn place_gorilla(
 }
 
 fn collide_field(pos: Vector) -> bool {
-    pos.x > WINDOW_X as f32 || pos.y > WINDOW_Y as f32 || pos.x < 0.0
+    pos.x > WINDOW_X || pos.y > WINDOW_Y || pos.x < 0.0
 }
 
 fn remove_parts(circle: Circle, parts: &mut Vec<Rectangle>) {
@@ -456,10 +608,10 @@ impl Game {
         shared.font.borrow_mut().execute(|f| {
             if let Ok(ref text) = f.render(
                 &format!("{:02} {:02}", self.points_left, self.points_right),
-                &shared.font_style,
+                &shared.default_style,
             ) {
                 window.draw_ex(
-                    &text.area().with_center((WINDOW_X / 2, 100)),
+                    &text.area().with_center((WINDOW_X / 2.0, 100.0)),
                     Img(text),
                     Transform::IDENTITY,
                     4.0,
