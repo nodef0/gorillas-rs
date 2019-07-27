@@ -24,6 +24,45 @@ enum Side {
 struct Bot {
     counter: i32,
     dir: Vector,
+    pos: Vector,
+    target: Vector,
+}
+
+impl Bot {
+    fn new(side: Side, round: &Round) -> Self {
+        let (dir, target, pos) = match side {
+            Side::Left => {
+                let target = round.gorilla_right.pos + round.gorilla_right.size / 2.0;
+                let pos = round.gorilla_left.pos + round.gorilla_left.size / 2.0;
+                (target - pos, target, pos)
+            }
+            Side::Right => {
+                let target = round.gorilla_left.pos + round.gorilla_left.size / 2.0;
+                let pos = round.gorilla_right.pos + round.gorilla_right.size / 2.0;
+                (target - pos, target, pos)
+            }
+        };
+        let dir = dir.normalize();
+        Bot {
+            counter: 0,
+            dir,
+            target,
+            pos,
+        }
+    }
+
+    fn aim(&mut self, collision: Vector) {
+        let mut inc = if collision.x < self.target.x {
+            BOT_AIM_INC_Y
+        } else {
+            -BOT_AIM_INC_Y
+        };
+        if self.pos.x < self.target.x {
+            inc = -inc;
+        }
+        self.dir.y += inc;
+        self.dir = self.dir.normalize();
+    }
 }
 
 enum Collision {
@@ -226,24 +265,19 @@ impl Game {
     pub fn new(config: GameConfig) -> Result<Self> {
         let sky_vec = gen_cuts(SKY_CUTS, &SKY_BLUE_DARK, &SKY_BLUE_LIGHT);
         let sky = Image::from_raw(&sky_vec, 1, (2 << (SKY_CUTS - 1)) - 1, PixelFormat::RGBA)?;
+        let round = Round::new();
         let bot_left = if config.bot_left {
-            Some(Bot {
-                dir: Vector { x: 1.0, y: 0.0 },
-                counter: 0,
-            })
+            Some(Bot::new(Side::Left, &round))
         } else {
             None
         };
         let bot_right = if config.bot_right {
-            Some(Bot {
-                dir: Vector { x: -1.0, y: 0.0 },
-                counter: 0,
-            })
+            Some(Bot::new(Side::Right, &round))
         } else {
             None
         };
         Ok(Game {
-            round: Round::new(),
+            round,
             counting: false,
             counter: 0i32,
             sky,
@@ -453,6 +487,23 @@ impl Game {
         }
     }
 
+    fn reset_bots(&mut self) {
+        if self.bot_right.is_some() {
+            self.bot_right = Some(Bot::new(Side::Right, &self.round));
+        }
+        if self.bot_left.is_some() {
+            self.bot_left = Some(Bot::new(Side::Left, &self.round));
+        }
+    }
+
+    fn update_aim(&mut self, pos: Vector) {
+        match (self.turn, &mut self.bot_right, &mut self.bot_left) {
+            (Side::Left, _, Some(bot)) => bot.aim(pos),
+            (Side::Right, Some(bot), _) => bot.aim(pos),
+            _ => (),
+        };
+    }
+
     pub fn update(&mut self, window: &mut Window) -> Result<()> {
         let gorilla = self.gorilla_from_side(self.turn);
         let center = gorilla.pos + (gorilla.size / 2);
@@ -474,6 +525,7 @@ impl Game {
                 self.turn = next_side(self.turn);
                 if self.new_game {
                     self.round = Round::new();
+                    self.reset_bots();
                     self.new_game = false;
                     return Ok(());
                 }
@@ -497,10 +549,12 @@ impl Game {
                     self.new_game = true;
                 }
                 Collision::Buildings(xs) => {
+                    self.update_aim(pos);
                     self.destroy_terrain(&circle, xs);
                     self.on_explode(pos);
                 }
                 _ => {
+                    self.update_aim(pos);
                     self.turn = next_side(self.turn);
                     self.shot = None;
                 }

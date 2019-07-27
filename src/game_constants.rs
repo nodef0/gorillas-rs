@@ -29,3 +29,4 @@ pub const PARTS_GRID_MIN: f32 = 4.0;
 pub const TITLE: &str = "gorillas.rs";
 pub const PLAY: &str = "Play [Enter]";
 pub const BOT_COUNTER_MAX: i32 = 200;
+pub const BOT_AIM_INC_Y: f32 = 0.1;
