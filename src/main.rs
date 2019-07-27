@@ -1,15 +1,12 @@
-mod game_constants;
 mod game;
+mod game_constants;
 
-use crate::game_constants::*;
 use crate::game::*;
+use crate::game_constants::*;
 
 use quicksilver::{
     geom::{Rectangle, Shape, Transform, Vector},
-    graphics::{
-        Background::Img,
-        Color, Font, FontStyle,
-    },
+    graphics::{Background::Img, Color, Font, FontStyle, Image},
     input::{ButtonState, Key, MouseButton},
     lifecycle::{run, Asset, Event, Settings, State, Window},
     Result,
@@ -18,6 +15,7 @@ use quicksilver::{
 use std::cell::RefCell;
 
 pub struct SharedAssets {
+    explosion: RefCell<Asset<Image>>,
     font: RefCell<Asset<Font>>,
     default_style: FontStyle,
     hoover_style: FontStyle,
@@ -29,6 +27,36 @@ pub struct GameConfig {
 }
 
 struct PauseMenu;
+
+#[derive(Copy, Clone)]
+enum Hoover {
+    None,
+    Left,
+    Right,
+    Play,
+}
+
+struct MainMenu {
+    dirty: bool,
+    bot_right: bool,
+    bot_left: bool,
+    hoover: Hoover,
+    areas: Vec<(Rectangle, Hoover)>,
+}
+
+enum Focus {
+    Main,
+    Game,
+    Pause,
+}
+
+struct States {
+    shared_assets: SharedAssets,
+    focus: Focus,
+    game: Option<Game>,
+    pause_menu: PauseMenu,
+    main_menu: MainMenu,
+}
 
 impl PauseMenu {
     fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
@@ -46,22 +74,6 @@ impl PauseMenu {
             Ok(())
         })
     }
-}
-
-#[derive(Copy, Clone)]
-enum Hoover {
-    None,
-    Left,
-    Right,
-    Play,
-}
-
-struct MainMenu {
-    dirty: bool,
-    bot_right: bool,
-    bot_left: bool,
-    hoover: Hoover,
-    areas: Vec<(Rectangle, Hoover)>,
 }
 
 impl MainMenu {
@@ -188,24 +200,11 @@ impl MainMenu {
     }
 }
 
-enum Focus {
-    Main,
-    Game,
-    Pause,
-}
-
-struct States {
-    shared_assets: SharedAssets,
-    focus: Focus,
-    game: Option<Game>,
-    pause_menu: PauseMenu,
-    main_menu: MainMenu,
-}
-
 impl State for States {
     fn new() -> Result<States> {
         Ok(States {
             shared_assets: SharedAssets {
+                explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
                 font: RefCell::new(Asset::new(Font::load("UI.ttf"))),
                 default_style: FontStyle::new(64.0, Color::WHITE),
                 hoover_style: FontStyle::new(64.0, Color::RED),

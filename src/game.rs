@@ -8,12 +8,12 @@ use quicksilver::{
         Color, Image, PixelFormat, View,
     },
     input::{ButtonState, MouseButton},
-    lifecycle::{Asset, Event, Window},
+    lifecycle::{Event, Window},
     Result,
 };
 
 use rand::prelude::*;
-use std::{cell::RefCell, cmp};
+use std::cmp;
 
 enum Side {
     Left,
@@ -27,15 +27,14 @@ enum Collision {
     Player(Side, Vec<usize>),
 }
 
-
-pub struct Round {
+struct Round {
     buildings: Vec<(Rectangle, Color, Option<Vec<Rectangle>>)>,
     gorilla_left: Rectangle,
     gorilla_right: Rectangle,
 }
 
 impl Round {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let buildings = buildings();
         let gorilla_left = place_gorilla(Side::Left, &buildings);
         let gorilla_right = place_gorilla(Side::Right, &buildings);
@@ -200,13 +199,11 @@ fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
     }
 }
 
-
 pub struct Game {
     round: Round,
     counting: bool,
     counter: i32,
     sky: Image,
-    explosion: RefCell<Asset<Image>>,
     explosion_state: Option<Explosion>,
     shot: Option<(Circle, Vector)>,
     turn: Side,
@@ -226,7 +223,6 @@ impl Game {
             counting: false,
             counter: 0i32,
             sky,
-            explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
             explosion_state: None,
             shot: None,
             turn: Side::Left,
@@ -344,7 +340,7 @@ impl Game {
         );
 
         // draw explosion frame
-        self.explosion.borrow_mut().execute(|img| {
+        shared.explosion.borrow_mut().execute(|img| {
             if let Some(ref explosion) = self.explosion_state {
                 window.draw_ex(
                     &Rectangle::new(explosion.pos, EXPLOSION_SIZE),
@@ -461,4 +457,3 @@ impl Game {
         Ok(())
     }
 }
-
