@@ -73,7 +73,7 @@ enum Collision {
 }
 
 struct Round {
-    buildings: Vec<(Rectangle, Color, Option<Vec<Rectangle>>)>,
+    buildings: Vec<Building>,
     gorilla_left: Rectangle,
     gorilla_right: Rectangle,
 }
@@ -114,6 +114,13 @@ pub struct Game {
     bot_left: Option<Bot>,
 }
 
+struct Building {
+    bound_box: Rectangle,
+    color: Color,      // TODO: remove once parts can be textured
+    tiles: Vec<usize>, // indicies into the tilemap
+    parts: Option<Vec<Rectangle>>,
+}
+
 fn cut(start: &[u8], end: &[u8], out: &mut [u8]) {
     for (i, e) in out.iter_mut().enumerate() {
         *e = (start[i] / 2 + end[i] / 2) + ((start[i] & 1) ^ (end[i] & 1));
@@ -134,20 +141,38 @@ fn gen_cuts(times: u32, start: &[u8], end: &[u8]) -> Vec<u8> {
     }
 }
 
-fn buildings() -> Vec<(Rectangle, Color, Option<Vec<Rectangle>>)> {
+fn buildings() -> Vec<Building> {
     let mut b = vec![];
     let mut rng = rand::thread_rng();
     let mut last_x = 0;
     loop {
-        let height = rng.gen_range(300, 500);
-        let width = 60 + 5 * rng.gen_range(0, 5);
-        let color = BUILD_PALETTE[rng.gen_range(0, 4)];
-        b.push((
-            Rectangle::new((last_x, height), (width - 2, WINDOW_Y as u32 - height)),
-            Color::from_rgba(color[0], color[1], color[2], 1.0),
-            None,
-        ));
-        last_x += width;
+        let pos_y = 16 * rng.gen_range(16, 32);
+        let height = WINDOW_Y as u32 - pos_y;
+        let width = 64 + 16 * rng.gen_range(0, 3);
+        let color_index = rng.gen_range(0, 4);
+        let color = BUILD_PALETTE[color_index];
+        let color_offset = 8 * color_index;
+        let mut tiles = vec![color_offset];
+        for _ in 1..width / 16 {
+            tiles.push(1 + color_offset);
+        }
+        tiles.push(2 + color_offset);
+        for _ in 1..=height / 16 {
+            tiles.push(3 + color_offset);
+            for _ in 1..width / 16 {
+                let mid_tile = rng.gen_range(5, 8);
+                tiles.push(mid_tile + color_offset);
+            }
+            tiles.push(4 + color_offset);
+        }
+
+        b.push(Building {
+            bound_box: Rectangle::new((last_x, pos_y), (width, height)),
+            color: Color::from_rgba(color[0], color[1], color[2], 1.0),
+            parts: None,
+            tiles,
+        });
+        last_x += width + 8;
         if last_x > WINDOW_X as u32 {
             break;
         }
@@ -169,17 +194,14 @@ fn next_side(side: Side) -> Side {
     }
 }
 
-fn place_gorilla(
-    side: Side,
-    buildings: &[(Rectangle, Color, Option<Vec<Rectangle>>)],
-) -> Rectangle {
+fn place_gorilla(side: Side, buildings: &[Building]) -> Rectangle {
     let field_length = buildings.len() - 1;
     let mut rng = rand::thread_rng();
     let i = match side {
         Side::Left => rng.gen_range(1, (field_length / 2) - DISTANCE_MIN),
         Side::Right => rng.gen_range((field_length / 2) + DISTANCE_MIN, field_length),
     };
-    let b = buildings[i].0;
+    let b = buildings[i].bound_box;
     Rectangle::new(
         (
             b.pos.x + b.size.x / 2.0 - GORILLA_SIZE.0 / 2.0,
@@ -205,15 +227,13 @@ fn remove_parts(circle: Circle, parts: &mut Vec<Rectangle>) {
     }
 }
 
-fn collide_shot(
-    circle: Circle,
-    buildings: &[(Rectangle, Color, Option<Vec<Rectangle>>)],
-) -> Vec<usize> {
+fn collide_shot(circle: Circle, buildings: &[Building]) -> Vec<usize> {
     let mut v = vec![];
-    for (i, (rect, _, parts)) in buildings.iter().enumerate() {
-        match parts {
+    for (i, building) in buildings.iter().enumerate() {
+        // (i, (rect, _, parts))
+        match &building.parts {
             None => {
-                if circle.overlaps(rect) {
+                if circle.overlaps(&building.bound_box) {
                     v.push(i);
                 }
             }
@@ -331,8 +351,8 @@ impl Game {
         let explosion = Circle::new(circle.pos, circle.radius * 4.0);
         for i in xs {
             let building = &mut self.round.buildings[i];
-            match building.2 {
-                None => building.2 = Some(create_parts(&explosion, &building.0)),
+            match building.parts {
+                None => building.parts = Some(create_parts(&explosion, &building.bound_box)),
                 Some(ref mut parts) => remove_parts(explosion, parts),
             }
         }
@@ -351,12 +371,33 @@ impl Game {
 
         //draw buildings
         for b in self.round.buildings.iter() {
-            if let Some(ref parts) = b.2 {
+            if let Some(ref parts) = b.parts {
                 for p in parts {
-                    window.draw_ex(p, b.1, Transform::IDENTITY, 1.0);
+                    window.draw_ex(p, b.color, Transform::IDENTITY, 1.0);
                 }
             } else {
-                window.draw_ex(&b.0, b.1, Transform::IDENTITY, 1.0);
+                // window.draw_ex(&b.bound_box, b.color, Transform::IDENTITY, 1.0);
+                shared.building_tiles.borrow_mut().execute(|img| {
+                    let origin = b.bound_box.pos - Vector { x: 8.0, y: 0.0 };
+                    let tiles_in_x = b.bound_box.size.x as usize / 16 + 1;
+                    for (i, tile) in b.tiles.iter().enumerate() {
+                        let tile_x = (tile % 4) * 16;
+                        let tile_y = (tile / 4) * 16;
+
+                        let pos_x = origin.x as usize + (i % tiles_in_x) * 16;
+                        let pos_y = origin.y as usize + (i / tiles_in_x) * 16;
+                        window.draw_ex(
+                            &Rectangle::new((pos_x as u32, pos_y as u32), (16, 16)),
+                            Img(&img.subimage(Rectangle::new(
+                                (tile_x as u32, tile_y as u32),
+                                (16, 16),
+                            ))),
+                            Transform::IDENTITY,
+                            1.0,
+                        );
+                    }
+                    Ok(())
+                })?;
             }
         }
 
@@ -377,7 +418,7 @@ impl Game {
         // draw shot
         if let Some((circle, _)) = self.shot {
             window.draw_ex(&circle, Col(Color::YELLOW), Transform::IDENTITY, 3.0);
-        } else if !self.new_game {
+        } else if !self.new_game && self.shot.is_none() && self.explosion_state.is_none() {
             // draw aim
             let gorilla = self.gorilla_from_side(self.turn);
             let center = gorilla.pos + (gorilla.size / 2);

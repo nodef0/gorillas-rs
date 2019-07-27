@@ -15,6 +15,7 @@ use quicksilver::{
 use std::cell::RefCell;
 
 pub struct SharedAssets {
+    building_tiles: RefCell<Asset<Image>>,
     explosion: RefCell<Asset<Image>>,
     font: RefCell<Asset<Font>>,
     default_style: FontStyle,
@@ -205,6 +206,7 @@ impl State for States {
         Ok(States {
             shared_assets: SharedAssets {
                 explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
+                building_tiles: RefCell::new(Asset::new(Image::load("Buildings.png"))),
                 font: RefCell::new(Asset::new(Font::load("UI.ttf"))),
                 default_style: FontStyle::new(64.0, Color::WHITE),
                 hoover_style: FontStyle::new(64.0, Color::RED),
