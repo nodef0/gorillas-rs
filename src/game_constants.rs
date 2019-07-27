@@ -28,3 +28,4 @@ pub const DISTANCE_MIN: usize = 2;
 pub const PARTS_GRID_MIN: f32 = 4.0;
 pub const TITLE: &str = "gorillas.rs";
 pub const PLAY: &str = "Play [Enter]";
+pub const BOT_DELAY_MAX: i32 = 60;

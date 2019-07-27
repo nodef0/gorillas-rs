@@ -266,7 +266,7 @@ impl State for States {
             }
             (_, Focus::Game) => {
                 if let Some(game) = &mut self.game {
-                    game.event(event, window)?;
+                    game.event(event);
                 }
                 Ok(())
             }

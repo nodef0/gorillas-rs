@@ -15,9 +15,16 @@ use quicksilver::{
 use rand::prelude::*;
 use std::cmp;
 
+#[derive(Copy, Clone)]
 enum Side {
     Left,
     Right,
+}
+
+struct Bot {
+    delay: i32,
+    dir: Vector,
+    power: f32,
 }
 
 enum Collision {
@@ -50,6 +57,23 @@ impl Round {
 struct Explosion {
     pos: Vector,
     frame: u32,
+}
+
+pub struct Game {
+    round: Round,
+    counting: bool,
+    counter: i32,
+    sky: Image,
+    explosion_state: Option<Explosion>,
+    shot: Option<(Circle, Vector)>,
+    turn: Side,
+    points_left: u32,
+    points_right: u32,
+    new_game: bool,
+    juice: Option<f32>,
+    mouse_pos: Vector,
+    bot_right: Option<Bot>,
+    bot_left: Option<Bot>,
 }
 
 fn cut(start: &[u8], end: &[u8], out: &mut [u8]) {
@@ -100,7 +124,7 @@ fn update_shot(pos: Vector, speed: Vector) -> (Vector, Vector) {
     )
 }
 
-fn next_side(side: &Side) -> Side {
+fn next_side(side: Side) -> Side {
     match side {
         Side::Left => Side::Right,
         Side::Right => Side::Left,
@@ -199,25 +223,28 @@ fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
     }
 }
 
-pub struct Game {
-    round: Round,
-    counting: bool,
-    counter: i32,
-    sky: Image,
-    explosion_state: Option<Explosion>,
-    shot: Option<(Circle, Vector)>,
-    turn: Side,
-    points_left: u32,
-    points_right: u32,
-    new_game: bool,
-    juice: Option<f32>,
-    mouse_pos: Vector,
-}
-
 impl Game {
-    pub fn new(_config: GameConfig) -> Result<Self> {
+    pub fn new(config: GameConfig) -> Result<Self> {
         let sky_vec = gen_cuts(SKY_CUTS, &SKY_BLUE_DARK, &SKY_BLUE_LIGHT);
         let sky = Image::from_raw(&sky_vec, 1, (2 << (SKY_CUTS - 1)) - 1, PixelFormat::RGBA)?;
+        let bot_left = if config.bot_left {
+            Some(Bot {
+                delay: 0,
+                dir: Vector { x: 1.0, y: 0.0 },
+                power: 200.0,
+            })
+        } else {
+            None
+        };
+        let bot_right = if config.bot_right {
+            Some(Bot {
+                delay: 0,
+                dir: Vector { x: -1.0, y: 0.0 },
+                power: 200.0,
+            })
+        } else {
+            None
+        };
         Ok(Game {
             round: Round::new(),
             counting: false,
@@ -231,9 +258,11 @@ impl Game {
             new_game: false,
             juice: None,
             mouse_pos: Vector::ZERO,
+            bot_left,
+            bot_right,
         })
     }
-    fn gorilla_from_side(&self, side: &Side) -> &Rectangle {
+    fn gorilla_from_side(&self, side: Side) -> &Rectangle {
         match side {
             Side::Left => &self.round.gorilla_left,
             Side::Right => &self.round.gorilla_right,
@@ -319,7 +348,7 @@ impl Game {
             window.draw_ex(&circle, Col(Color::YELLOW), Transform::IDENTITY, 3.0);
         } else if !self.new_game {
             // draw aim
-            let gorilla = self.gorilla_from_side(&self.turn);
+            let gorilla = self.gorilla_from_side(self.turn);
             let center = gorilla.pos + (gorilla.size / 2);
             let dir = (self.mouse_pos - center).normalize();
             window.draw_ex(
@@ -375,7 +404,7 @@ impl Game {
         Ok(())
     }
 
-    pub fn event(&mut self, event: &Event, window: &mut Window) -> Result<()> {
+    fn event_player(&mut self, event: &Event) {
         match (event, self.counting, self.shot) {
             (Event::MouseMoved(pos), _, _) => self.mouse_pos = *pos,
             (Event::MouseButton(MouseButton::Left, ButtonState::Pressed), false, None) => {
@@ -383,21 +412,54 @@ impl Game {
             }
             (Event::MouseButton(MouseButton::Left, ButtonState::Released), true, None) => {
                 self.counting = false;
-                let gorilla = self.gorilla_from_side(&self.turn);
+                let gorilla = self.gorilla_from_side(self.turn);
                 let center = gorilla.pos + (gorilla.size / 2);
-                let dir = (window.mouse().pos() - center).normalize();
+                let dir = (self.mouse_pos - center).normalize();
                 self.shot = Some((
                     Circle::new(center + dir * 4 * SHOT_RADIUS, SHOT_RADIUS),
                     dir * 0.006 * self.counter as f32,
                 ));
-                self.turn = next_side(&self.turn);
             }
             _ => (),
-        };
-        Ok(())
+        }
+    }
+
+    pub fn event(&mut self, event: &Event) {
+        match (self.turn, &mut self.bot_right, &mut self.bot_left) {
+            (Side::Left, _, None) => self.event_player(event),
+            (Side::Right, None, _) => self.event_player(event),
+            _ => (),
+        }
+    }
+
+    fn update_bot(bot: &mut Bot, center: Vector) -> Option<(Circle, Vector)> {
+        bot.delay += 1;
+        if bot.delay > BOT_DELAY_MAX {
+            bot.delay = 0;
+            Some((
+                Circle::new(center + bot.dir * 4 * SHOT_RADIUS, SHOT_RADIUS),
+                bot.dir * 0.006 * bot.power,
+            ))
+        } else {
+            None
+        }
     }
 
     pub fn update(&mut self, window: &mut Window) -> Result<()> {
+        let gorilla = self.gorilla_from_side(self.turn);
+        let center = gorilla.pos + (gorilla.size / 2);
+
+        if self.shot.is_none() {
+            let bot_shot = match (self.turn, &mut self.bot_right, &mut self.bot_left) {
+                (Side::Left, _, Some(bot)) => Game::update_bot(bot, center),
+                (Side::Right, Some(bot), _) => Game::update_bot(bot, center),
+                _ => None,
+            };
+            if let Some(shot) = bot_shot {
+                self.shot = Some(shot);
+            }
+        }
+
         if let Some(ref mut state) = self.explosion_state {
             if state.frame / 2 == EXPLOSION_FRAMES {
                 self.explosion_state = None;
@@ -405,6 +467,8 @@ impl Game {
                     self.round = Round::new();
                     self.new_game = false;
                     return Ok(());
+                } else {
+                    self.turn = next_side(self.turn);
                 }
             } else {
                 state.frame += 1;
@@ -429,7 +493,10 @@ impl Game {
                     self.destroy_terrain(&circle, xs);
                     self.on_explode(pos);
                 }
-                _ => self.shot = None,
+                _ => {
+                    self.turn = next_side(self.turn);
+                    self.shot = None;
+                }
             }
         }
 
