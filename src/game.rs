@@ -22,9 +22,8 @@ enum Side {
 }
 
 struct Bot {
-    delay: i32,
+    counter: i32,
     dir: Vector,
-    power: f32,
 }
 
 enum Collision {
@@ -229,18 +228,16 @@ impl Game {
         let sky = Image::from_raw(&sky_vec, 1, (2 << (SKY_CUTS - 1)) - 1, PixelFormat::RGBA)?;
         let bot_left = if config.bot_left {
             Some(Bot {
-                delay: 0,
                 dir: Vector { x: 1.0, y: 0.0 },
-                power: 200.0,
+                counter: 0,
             })
         } else {
             None
         };
         let bot_right = if config.bot_right {
             Some(Bot {
-                delay: 0,
                 dir: Vector { x: -1.0, y: 0.0 },
-                power: 200.0,
+                counter: 0,
             })
         } else {
             None
@@ -350,7 +347,11 @@ impl Game {
             // draw aim
             let gorilla = self.gorilla_from_side(self.turn);
             let center = gorilla.pos + (gorilla.size / 2);
-            let dir = (self.mouse_pos - center).normalize();
+            let dir = match (self.turn, &self.bot_left, &self.bot_right) {
+                (Side::Left, Some(bot), _) => bot.dir,
+                (Side::Right, _, Some(bot)) => bot.dir,
+                _ => (self.mouse_pos - center).normalize(),
+            };
             window.draw_ex(
                 &Line::new(center + (dir * START_OFFSET), center + (dir * END_OFFSET))
                     .with_thickness(4.0),
@@ -360,9 +361,15 @@ impl Game {
             );
         }
 
+        let power = match (self.turn, &self.bot_left, &self.bot_right) {
+            (Side::Left, Some(bot), _) => bot.counter,
+            (Side::Right, _, Some(bot)) => bot.counter,
+            _ => self.counter,
+        };
+
         // draw power bar
         window.draw_ex(
-            &Rectangle::new((100, 500), (self.counter, 50)),
+            &Rectangle::new((100, 500), (power, 50)),
             Col(Color::RED),
             Transform::IDENTITY,
             3.0,
@@ -433,12 +440,13 @@ impl Game {
     }
 
     fn update_bot(bot: &mut Bot, center: Vector) -> Option<(Circle, Vector)> {
-        bot.delay += 1;
-        if bot.delay > BOT_DELAY_MAX {
-            bot.delay = 0;
+        bot.counter = cmp::min(bot.counter + 3, BOT_COUNTER_MAX);
+        if bot.counter == BOT_COUNTER_MAX {
+            let power = bot.counter;
+            bot.counter = 0;
             Some((
                 Circle::new(center + bot.dir * 4 * SHOT_RADIUS, SHOT_RADIUS),
-                bot.dir * 0.006 * bot.power,
+                bot.dir * 0.006 * power,
             ))
         } else {
             None
@@ -449,7 +457,7 @@ impl Game {
         let gorilla = self.gorilla_from_side(self.turn);
         let center = gorilla.pos + (gorilla.size / 2);
 
-        if self.shot.is_none() {
+        if self.shot.is_none() && self.explosion_state.is_none() {
             let bot_shot = match (self.turn, &mut self.bot_right, &mut self.bot_left) {
                 (Side::Left, _, Some(bot)) => Game::update_bot(bot, center),
                 (Side::Right, Some(bot), _) => Game::update_bot(bot, center),
@@ -463,12 +471,11 @@ impl Game {
         if let Some(ref mut state) = self.explosion_state {
             if state.frame / 2 == EXPLOSION_FRAMES {
                 self.explosion_state = None;
+                self.turn = next_side(self.turn);
                 if self.new_game {
                     self.round = Round::new();
                     self.new_game = false;
                     return Ok(());
-                } else {
-                    self.turn = next_side(self.turn);
                 }
             } else {
                 state.frame += 1;
