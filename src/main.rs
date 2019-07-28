@@ -1,5 +1,6 @@
 mod game;
 mod game_constants;
+mod circle;
 
 use crate::game::*;
 use crate::game_constants::*;
@@ -16,6 +17,7 @@ use std::cell::RefCell;
 
 pub struct SharedAssets {
     building_tiles: RefCell<Asset<Image>>,
+    sky: RefCell<Asset<Image>>,
     explosion: RefCell<Asset<Image>>,
     font: RefCell<Asset<Font>>,
     default_style: FontStyle,
@@ -206,6 +208,7 @@ impl State for States {
         Ok(States {
             shared_assets: SharedAssets {
                 explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
+                sky: RefCell::new(Asset::new(Image::load("Sky.png"))),
                 building_tiles: RefCell::new(Asset::new(Image::load("Buildings.png"))),
                 font: RefCell::new(Asset::new(Font::load("UI.ttf"))),
                 default_style: FontStyle::new(64.0, Color::WHITE),

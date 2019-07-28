@@ -1,15 +1,5 @@
 use quicksilver::geom::Vector;
 
-pub const BUILD_PALETTE: [[u8; 3]; 4] = [
-    [0x22, 0xa0, 0xb6],
-    [0xcb, 0x0c, 0x59],
-    [0xbb, 0xbb, 0xbb],
-    [0x24, 0x24, 0x24],
-];
-
-pub const SKY_BLUE_DARK: [u8; 4] = [0x09, 0x18, 0x33, 0xFF];
-pub const SKY_BLUE_LIGHT: [u8; 4] = [0x13, 0x3e, 0x7c, 0xFF];
-pub const SKY_CUTS: u32 = 4;
 pub const WINDOW_X: f32 = 800.0;
 pub const WINDOW_Y: f32 = 600.0;
 pub const CENTER: (f32, f32) = (WINDOW_X / 2.0, WINDOW_Y / 2.0);

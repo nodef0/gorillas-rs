@@ -1,11 +1,12 @@
 use crate::game_constants::*;
 use crate::{GameConfig, SharedAssets};
+use crate::circle::CircleF;
 
 use quicksilver::{
     geom::{Circle, Line, Rectangle, Shape, Transform, Vector},
     graphics::{
         Background::{Col, Img},
-        Color, Image, PixelFormat, View,
+        Color, View,
     },
     input::{ButtonState, MouseButton},
     lifecycle::{Event, Window},
@@ -101,8 +102,8 @@ pub struct Game {
     round: Round,
     counting: bool,
     counter: i32,
-    sky: Image,
     explosion_state: Option<Explosion>,
+    explosion_masks: Vec<Circle>,
     shot: Option<(Circle, Vector)>,
     turn: Side,
     points_left: u32,
@@ -116,29 +117,8 @@ pub struct Game {
 
 struct Building {
     bound_box: Rectangle,
-    color: Color,      // TODO: remove once parts can be textured
     tiles: Vec<usize>, // indicies into the tilemap
     parts: Option<Vec<Rectangle>>,
-}
-
-fn cut(start: &[u8], end: &[u8], out: &mut [u8]) {
-    for (i, e) in out.iter_mut().enumerate() {
-        *e = (start[i] / 2 + end[i] / 2) + ((start[i] & 1) ^ (end[i] & 1));
-    }
-}
-
-fn gen_cuts(times: u32, start: &[u8], end: &[u8]) -> Vec<u8> {
-    if times == 0 {
-        Vec::new()
-    } else {
-        let mut t = [0; 4];
-        cut(start, end, &mut t);
-        let mut p = gen_cuts(times - 1, start, &t);
-        let mut n = gen_cuts(times - 1, &t, end);
-        p.extend_from_slice(&t);
-        p.append(&mut n);
-        p
-    }
 }
 
 fn buildings() -> Vec<Building> {
@@ -149,9 +129,7 @@ fn buildings() -> Vec<Building> {
         let pos_y = 16 * rng.gen_range(16, 32);
         let height = WINDOW_Y as u32 - pos_y;
         let width = 64 + 16 * rng.gen_range(0, 3);
-        let color_index = rng.gen_range(0, 4);
-        let color = BUILD_PALETTE[color_index];
-        let color_offset = 8 * color_index;
+        let color_offset = 8 * rng.gen_range(0, 4); 
         let mut tiles = vec![color_offset];
         for _ in 1..width / 16 {
             tiles.push(1 + color_offset);
@@ -168,7 +146,6 @@ fn buildings() -> Vec<Building> {
 
         b.push(Building {
             bound_box: Rectangle::new((last_x, pos_y), (width, height)),
-            color: Color::from_rgba(color[0], color[1], color[2], 1.0),
             parts: None,
             tiles,
         });
@@ -281,10 +258,9 @@ fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
     }
 }
 
+
 impl Game {
     pub fn new(config: GameConfig) -> Result<Self> {
-        let sky_vec = gen_cuts(SKY_CUTS, &SKY_BLUE_DARK, &SKY_BLUE_LIGHT);
-        let sky = Image::from_raw(&sky_vec, 1, (2 << (SKY_CUTS - 1)) - 1, PixelFormat::RGBA)?;
         let round = Round::new();
         let bot_left = if config.bot_left {
             Some(Bot::new(Side::Left, &round))
@@ -300,8 +276,8 @@ impl Game {
             round,
             counting: false,
             counter: 0i32,
-            sky,
             explosion_state: None,
+            explosion_masks: vec![],
             shot: None,
             turn: Side::Left,
             points_left: 0,
@@ -356,38 +332,56 @@ impl Game {
                 Some(ref mut parts) => remove_parts(explosion, parts),
             }
         }
+        self.explosion_masks.push(explosion);
     }
 
     pub fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
         window.clear(Color::BLACK)?;
 
         // draw sky
-        window.draw_ex(
-            &Rectangle::new((0, 0), window.screen_size()),
-            Img(&self.sky),
-            Transform::IDENTITY,
-            0.0,
-        );
+        shared.sky.borrow_mut().execute(|img| {
+
+            for mask in &self.explosion_masks {
+                window.draw_ex(
+                    &CircleF {
+                        pos: mask.pos,
+                        radius: mask.radius,
+                    },
+                    Img(&img.subimage(mask.bounding_box())),
+                    Transform::IDENTITY,
+                    2.0,
+                );
+            }
+
+            window.draw_ex(
+                &Rectangle::new((0, 0), window.screen_size()),
+                Img(&img),
+                Transform::IDENTITY,
+                0.0,
+            );
+            
+            Ok(())
+        })?;
 
         //draw buildings
         for b in self.round.buildings.iter() {
-            if let Some(ref parts) = b.parts {
-                for p in parts {
-                    window.draw_ex(p, b.color, Transform::IDENTITY, 1.0);
-                }
-            } else {
+            //if let Some(ref parts) = b.parts {
+            //    for p in parts {
+            //        window.draw_ex(p, b.color, Transform::IDENTITY, 1.0);
+            //    }
+            //} else {
                 // window.draw_ex(&b.bound_box, b.color, Transform::IDENTITY, 1.0);
                 shared.building_tiles.borrow_mut().execute(|img| {
                     let origin = b.bound_box.pos - Vector { x: 8.0, y: 0.0 };
-                    let tiles_in_x = b.bound_box.size.x as usize / 16 + 1;
+                    let tiles_in_x = b.bound_box.size.x as i32 / 16 + 1;
                     for (i, tile) in b.tiles.iter().enumerate() {
                         let tile_x = (tile % 4) * 16;
                         let tile_y = (tile / 4) * 16;
 
-                        let pos_x = origin.x as usize + (i % tiles_in_x) * 16;
-                        let pos_y = origin.y as usize + (i / tiles_in_x) * 16;
+                        let pos_x = origin.x as i32 + (i as i32 % tiles_in_x) * 16;
+                        let pos_y = origin.y as i32 + (i as i32 / tiles_in_x) * 16;
                         window.draw_ex(
-                            &Rectangle::new((pos_x as u32, pos_y as u32), (16, 16)),
+                            &Rectangle::new((pos_x as i32, pos_y as i32), (16, 16)),
                             Img(&img.subimage(Rectangle::new(
                                 (tile_x as u32, tile_y as u32),
                                 (16, 16),
@@ -398,7 +392,7 @@ impl Game {
                     }
                     Ok(())
                 })?;
-            }
+            //}
         }
 
         // draw gorillas
@@ -406,13 +400,13 @@ impl Game {
             &self.round.gorilla_left,
             Col(Color::RED),
             Transform::IDENTITY,
-            2.0,
+            3.0,
         );
         window.draw_ex(
             &self.round.gorilla_right,
             Col(Color::RED),
             Transform::IDENTITY,
-            2.0,
+            3.0,
         );
 
         // draw shot
@@ -566,6 +560,7 @@ impl Game {
                 self.turn = next_side(self.turn);
                 if self.new_game {
                     self.round = Round::new();
+                    self.explosion_masks.clear();
                     self.reset_bots();
                     self.new_game = false;
                     return Ok(());
