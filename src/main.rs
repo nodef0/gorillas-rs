@@ -1,6 +1,8 @@
-mod circle;
 mod game;
 mod game_constants;
+
+#[allow(clippy::all)]
+mod circle;
 
 use crate::game::*;
 use crate::game_constants::*;

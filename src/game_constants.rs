@@ -10,6 +10,7 @@ pub const SHOT_RADIUS: f32 = 10.0;
 pub const EXPLOSION_FRAMES: u32 = 12;
 pub const EXPLOSION_SIZE: (u32, u32) = (96, 96);
 pub const EXPLOSION_HALF_VEC: Vector = Vector { x: 48.0, y: 48.0 };
+pub const EXPLOSION_DESTROY_SCALE: f32 = 4.0;
 pub const POWER_MAX: i32 = 200;
 pub const JUICE_COUNTER: f32 = 0.5;
 pub const START_OFFSET: f32 = 60.0;
@@ -20,6 +21,8 @@ pub const TITLE: &str = "gorillas.rs";
 pub const PLAY: &str = "Play [Enter]";
 pub const BOT_COUNTER_MAX: i32 = 200;
 pub const BOT_AIM_INC_Y: f32 = 0.1;
+
+pub const TILE_SIZE: (u32, u32) = (16, 16);
 
 pub const PLAYER_PALETTE: [&str; 10] = [
     "4a5462", "4a5462", "4a5462", "4a5462", "b3b9d1", "b3b9d1", "b3b9d1", "b3b9d1", "fad6b8",

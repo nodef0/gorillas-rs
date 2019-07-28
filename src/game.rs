@@ -29,43 +29,6 @@ struct Bot {
     target: Vector,
 }
 
-impl Bot {
-    fn new(side: Side, round: &Round) -> Self {
-        let (dir, target, pos) = match side {
-            Side::Left => {
-                let target = round.gorilla_right.pos + round.gorilla_right.size / 2.0;
-                let pos = round.gorilla_left.pos + round.gorilla_left.size / 2.0;
-                (target - pos, target, pos)
-            }
-            Side::Right => {
-                let target = round.gorilla_left.pos + round.gorilla_left.size / 2.0;
-                let pos = round.gorilla_right.pos + round.gorilla_right.size / 2.0;
-                (target - pos, target, pos)
-            }
-        };
-        let dir = dir.normalize();
-        Bot {
-            counter: 0,
-            dir,
-            target,
-            pos,
-        }
-    }
-
-    fn aim(&mut self, collision: Vector) {
-        let mut inc = if collision.x < self.target.x {
-            BOT_AIM_INC_Y
-        } else {
-            -BOT_AIM_INC_Y
-        };
-        if self.pos.x < self.target.x {
-            inc = -inc;
-        }
-        self.dir.y += inc;
-        self.dir = self.dir.normalize();
-    }
-}
-
 enum Collision {
     None,
     Sky,
@@ -77,20 +40,6 @@ struct Round {
     buildings: Vec<Building>,
     gorilla_left: Rectangle,
     gorilla_right: Rectangle,
-}
-
-impl Round {
-    fn new() -> Self {
-        let buildings = buildings();
-        let gorilla_left = place_gorilla(Side::Left, &buildings);
-        let gorilla_right = place_gorilla(Side::Right, &buildings);
-
-        Round {
-            buildings,
-            gorilla_left,
-            gorilla_right,
-        }
-    }
 }
 
 struct Explosion {
@@ -122,40 +71,92 @@ struct Building {
     parts: Option<Vec<Rectangle>>,
 }
 
-fn buildings() -> Vec<Building> {
-    let mut b = vec![];
-    let mut rng = rand::thread_rng();
-    let mut last_x = 0;
-    loop {
-        let pos_y = 16 * rng.gen_range(16, 32);
-        let height = WINDOW_Y as u32 - pos_y;
-        let width = 64 + 16 * rng.gen_range(0, 3);
-        let color_offset = 8 * rng.gen_range(0, 4);
-        let mut tiles = vec![color_offset];
-        for _ in 1..width / 16 {
-            tiles.push(1 + color_offset);
-        }
-        tiles.push(2 + color_offset);
-        for _ in 1..=height / 16 {
-            tiles.push(3 + color_offset);
-            for _ in 1..width / 16 {
-                let mid_tile = rng.gen_range(5, 8);
-                tiles.push(mid_tile + color_offset);
+impl Bot {
+    fn new(side: Side, round: &Round) -> Self {
+        let (dir, target, pos) = match side {
+            Side::Left => {
+                let target = round.gorilla_right.center();
+                let pos = round.gorilla_left.center();
+                (target - pos, target, pos)
             }
-            tiles.push(4 + color_offset);
-        }
-
-        b.push(Building {
-            bound_box: Rectangle::new((last_x, pos_y), (width, height)),
-            parts: None,
-            tiles,
-        });
-        last_x += width + 8;
-        if last_x > WINDOW_X as u32 {
-            break;
+            Side::Right => {
+                let target = round.gorilla_left.center();
+                let pos = round.gorilla_right.center();
+                (target - pos, target, pos)
+            }
+        };
+        let dir = dir.normalize();
+        Bot {
+            counter: 0,
+            dir,
+            target,
+            pos,
         }
     }
-    b
+
+    fn aim(&mut self, collision: Vector) {
+        let mut inc = if collision.x < self.target.x {
+            BOT_AIM_INC_Y
+        } else {
+            -BOT_AIM_INC_Y
+        };
+        if self.pos.x < self.target.x {
+            inc = -inc;
+        }
+        self.dir.y += inc;
+        self.dir = self.dir.normalize();
+    }
+}
+
+impl Round {
+    fn new() -> Self {
+        let buildings = Building::buildings();
+        let gorilla_left = place_gorilla(Side::Left, &buildings);
+        let gorilla_right = place_gorilla(Side::Right, &buildings);
+        Round {
+            buildings,
+            gorilla_left,
+            gorilla_right,
+        }
+    }
+}
+
+impl Building {
+    fn buildings() -> Vec<Building> {
+        let mut b = vec![];
+        let mut rng = rand::thread_rng();
+        let mut last_x = 0;
+        loop {
+            let pos_y = TILE_SIZE.1 * rng.gen_range(16, 32);
+            let height = WINDOW_Y as u32 - pos_y;
+            let width = 64 + TILE_SIZE.0 * rng.gen_range(0, 3);
+            let color_offset = 8 * rng.gen_range(0, 4);
+            let mut tiles = vec![color_offset];
+            for _ in 1..width / TILE_SIZE.0 {
+                tiles.push(1 + color_offset);
+            }
+            tiles.push(2 + color_offset);
+            for _ in 1..=height / 16 {
+                tiles.push(3 + color_offset);
+                for _ in 1..width / 16 {
+                    let mid_tile = rng.gen_range(5, 8);
+                    tiles.push(mid_tile + color_offset);
+                }
+                tiles.push(4 + color_offset);
+            }
+
+            b.push(Building {
+                bound_box: Rectangle::new((last_x, pos_y), (width, height)),
+                parts: None,
+                tiles,
+            });
+            last_x += width + 8;
+            if last_x > WINDOW_X as u32 {
+                break;
+            }
+        }
+        b
+    }
 }
 
 fn update_shot(pos: Vector, speed: Vector) -> (Vector, Vector) {
@@ -182,7 +183,7 @@ fn place_gorilla(side: Side, buildings: &[Building]) -> Rectangle {
     let b = buildings[i].bound_box;
     Rectangle::new(
         (
-            b.pos.x + b.size.x / 2.0 - GORILLA_SIZE.0 as f32 / 2.0,
+            b.center().x - GORILLA_SIZE.0 as f32 / 2.0,
             b.pos.y - GORILLA_SIZE.1 as f32,
         ),
         GORILLA_SIZE,
@@ -193,7 +194,7 @@ fn collide_field(pos: Vector) -> bool {
     pos.x > WINDOW_X || pos.y > WINDOW_Y || pos.x < 0.0
 }
 
-fn remove_parts(circle: Circle, parts: &mut Vec<Rectangle>) {
+fn remove_parts(circle: &Circle, parts: &mut Vec<Rectangle>) {
     let overlap = parts
         .iter()
         .cloned()
@@ -208,8 +209,7 @@ fn remove_parts(circle: Circle, parts: &mut Vec<Rectangle>) {
 fn collide_shot(circle: Circle, buildings: &[Building]) -> Vec<usize> {
     let mut v = vec![];
     for (i, building) in buildings.iter().enumerate() {
-        // (i, (rect, _, parts))
-        match &building.parts {
+        match building.parts.as_ref() {
             None => {
                 if circle.overlaps(&building.bound_box) {
                     v.push(i);
@@ -289,6 +289,7 @@ impl Game {
             bot_right,
         })
     }
+
     fn gorilla_from_side(&self, side: Side) -> &Rectangle {
         match side {
             Side::Left => &self.round.gorilla_left,
@@ -343,12 +344,12 @@ impl Game {
     }
 
     fn destroy_terrain(&mut self, circle: &Circle, xs: Vec<usize>) {
-        let explosion = Circle::new(circle.pos, circle.radius * 4.0);
+        let explosion = Circle::new(circle.pos, circle.radius * EXPLOSION_DESTROY_SCALE);
         for i in xs {
             let building = &mut self.round.buildings[i];
-            match building.parts {
+            match building.parts.as_mut() {
                 None => building.parts = Some(create_parts(&explosion, &building.bound_box)),
-                Some(ref mut parts) => remove_parts(explosion, parts),
+                Some(parts) => remove_parts(&explosion, parts),
             }
         }
         self.explosion_masks.push(explosion);
@@ -360,6 +361,7 @@ impl Game {
         // draw sky
         shared.sky.borrow_mut().execute(|img| {
             for mask in &self.explosion_masks {
+                // TODO: update once upstream is fixed
                 window.draw_ex(
                     &CircleF {
                         pos: mask.pos,
@@ -372,7 +374,7 @@ impl Game {
             }
 
             window.draw_ex(
-                &Rectangle::new((0, 0), window.screen_size()),
+                &Rectangle::new_sized(window.screen_size()),
                 Img(&img),
                 Transform::IDENTITY,
                 0.0,
@@ -382,36 +384,32 @@ impl Game {
         })?;
 
         //draw buildings
-        for b in self.round.buildings.iter() {
-            //if let Some(ref parts) = b.parts {
-            //    for p in parts {
-            //        window.draw_ex(p, b.color, Transform::IDENTITY, 1.0);
-            //    }
-            //} else {
-            // window.draw_ex(&b.bound_box, b.color, Transform::IDENTITY, 1.0);
-            shared.building_tiles.borrow_mut().execute(|img| {
-                let origin = b.bound_box.pos - Vector { x: 8.0, y: 0.0 };
-                let tiles_in_x = b.bound_box.size.x as i32 / 16 + 1;
+        shared.building_tiles.borrow_mut().execute(|img| {
+            for b in self.round.buildings.iter() {
+                let origin = b.bound_box.pos
+                    - Vector {
+                        x: TILE_SIZE.0 as f32 / 2.0,
+                        y: 0.0,
+                    };
+                let tiles_in_x = b.bound_box.size.x as u32 / TILE_SIZE.0 + 1;
                 for (i, tile) in b.tiles.iter().enumerate() {
-                    let tile_x = (tile % 4) * 16;
-                    let tile_y = (tile / 4) * 16;
+                    let tile = *tile as u32;
+                    let i = i as u32;
+                    let tile_x = (tile % 4) * TILE_SIZE.0;
+                    let tile_y = (tile / 4) * TILE_SIZE.1;
 
-                    let pos_x = origin.x as i32 + (i as i32 % tiles_in_x) * 16;
-                    let pos_y = origin.y as i32 + (i as i32 / tiles_in_x) * 16;
+                    let pos_x = origin.x as i32 + ((i % tiles_in_x) * TILE_SIZE.0) as i32;
+                    let pos_y = origin.y as i32 + ((i / tiles_in_x) * TILE_SIZE.1) as i32;
                     window.draw_ex(
-                            &Rectangle::new((pos_x as i32, pos_y as i32), (16, 16)),
-                            Img(&img.subimage(Rectangle::new(
-                                (tile_x as u32, tile_y as u32),
-                                (16, 16),
-                            ))),
-                            Transform::IDENTITY,
-                            1.0,
-                        );
+                        &Rectangle::new((pos_x, pos_y), TILE_SIZE),
+                        Img(&img.subimage(Rectangle::new((tile_x, tile_y), TILE_SIZE))),
+                        Transform::IDENTITY,
+                        1.0,
+                    );
                 }
-                Ok(())
-            })?;
-            //}
-        }
+            }
+            Ok(())
+        })?;
 
         shared.player_tiles.borrow_mut().execute(|img| {
             // draw gorillas
@@ -423,48 +421,26 @@ impl Game {
                 (Side::Left, true) => (1, 0),
                 (Side::Right, true) => (0, 1),
             };
+
+            let mut draw_gorilla = |side, index: u32| {
+                window.draw_ex(
+                    self.gorilla_from_side(side),
+                    Img(&img.subimage(Rectangle::new((GORILLA_SIZE.0 * index, 0), GORILLA_SIZE))),
+                    Transform::IDENTITY,
+                    3.0,
+                );
+            };
+
             match self.new_game {
                 None => {
-                    window.draw_ex(
-                        &self.round.gorilla_left,
-                        Img(&img.subimage(Rectangle::new(
-                            (GORILLA_SIZE.0 * index_left, 0),
-                            GORILLA_SIZE,
-                        ))),
-                        Transform::IDENTITY,
-                        3.0,
-                    );
-                    window.draw_ex(
-                        &self.round.gorilla_right,
-                        Img(&img.subimage(Rectangle::new(
-                            (GORILLA_SIZE.0 * index_right, 0),
-                            GORILLA_SIZE,
-                        ))),
-                        Transform::IDENTITY,
-                        3.0,
-                    );
+                    draw_gorilla(Side::Left, index_left);
+                    draw_gorilla(Side::Right, index_right);
                 }
                 Some(Side::Left) => {
-                    window.draw_ex(
-                        &self.round.gorilla_left,
-                        Img(&img.subimage(Rectangle::new(
-                            (GORILLA_SIZE.0 * index_left, 0),
-                            GORILLA_SIZE,
-                        ))),
-                        Transform::IDENTITY,
-                        3.0,
-                    );
+                    draw_gorilla(Side::Left, index_left);
                 }
                 Some(Side::Right) => {
-                    window.draw_ex(
-                        &self.round.gorilla_right,
-                        Img(&img.subimage(Rectangle::new(
-                            (GORILLA_SIZE.0 * index_right, 0),
-                            GORILLA_SIZE,
-                        ))),
-                        Transform::IDENTITY,
-                        3.0,
-                    );
+                    draw_gorilla(Side::Right, index_right);
                 }
             }
             Ok(())
@@ -475,8 +451,7 @@ impl Game {
             window.draw_ex(&circle, Col(Color::YELLOW), Transform::IDENTITY, 3.0);
         } else if self.new_game.is_none() && self.shot.is_none() && self.explosion_state.is_none() {
             // draw aim
-            let gorilla = self.gorilla_from_side(self.turn);
-            let center = gorilla.pos + (gorilla.size / 2);
+            let center = self.gorilla_from_side(self.turn).center();
             let dir = match (self.turn, &self.bot_left, &self.bot_right) {
                 (Side::Left, Some(bot), _) => bot.dir,
                 (Side::Right, _, Some(bot)) => bot.dir,
@@ -491,7 +466,7 @@ impl Game {
             );
         }
 
-        let power = match (self.turn, &self.bot_left, &self.bot_right) {
+        let power = match (self.turn, self.bot_left.as_ref(), self.bot_right.as_ref()) {
             (Side::Left, Some(bot), _) => bot.counter,
             (Side::Right, _, Some(bot)) => bot.counter,
             _ => self.counter,
@@ -505,33 +480,30 @@ impl Game {
             3.0,
         );
 
-        // draw explosion frame
         shared.explosion.borrow_mut().execute(|img| {
-            if let Some(ref explosion) = self.explosion_state {
+            // draw explosion frame
+            if let Some(explosion) = self.explosion_state.as_ref() {
                 window.draw_ex(
                     &Rectangle::new(explosion.pos, EXPLOSION_SIZE),
                     Img(&img.subimage(Rectangle::new(
-                        (96 * (explosion.frame / 2), 0),
+                        (EXPLOSION_SIZE.0 * (explosion.frame / 2), 0),
                         EXPLOSION_SIZE,
                     ))),
                     Transform::IDENTITY,
                     4.0,
                 );
+                // draw particles
+                for particle in explosion.particles.iter() {
+                    window.draw_ex(
+                        &Rectangle::new(particle.0, PARTICLE_SIZE),
+                        Col(particle.2),
+                        Transform::IDENTITY,
+                        5.0,
+                    );
+                }
             }
             Ok(())
         })?;
-
-        // draw particles
-        if let Some(explosion) = &self.explosion_state {
-            for particle in &explosion.particles {
-                window.draw_ex(
-                    &Rectangle::new(particle.0, PARTICLE_SIZE),
-                    Col(particle.2),
-                    Transform::IDENTITY,
-                    5.0,
-                );
-            }
-        }
 
         //draw score
         shared.font.borrow_mut().execute(|f| {
@@ -545,8 +517,6 @@ impl Game {
                     Transform::IDENTITY,
                     4.0,
                 );
-            } else {
-                eprintln!("Failed to render score")
             }
             Ok(())
         })?;
@@ -560,10 +530,9 @@ impl Game {
                 self.counting = true;
             }
             (Event::MouseButton(MouseButton::Left, ButtonState::Released), true, None) => {
-                self.counting = false;
-                let gorilla = self.gorilla_from_side(self.turn);
-                let center = gorilla.pos + (gorilla.size / 2);
+                let center = self.gorilla_from_side(self.turn).center();
                 let dir = (self.mouse_pos - center).normalize();
+                self.counting = false;
                 self.shot = Some((
                     Circle::new(center + dir * 6 * SHOT_RADIUS, SHOT_RADIUS),
                     dir * 0.006 * self.counter as f32,
@@ -605,7 +574,7 @@ impl Game {
     }
 
     fn update_aim(&mut self, pos: Vector) {
-        match (self.turn, &mut self.bot_right, &mut self.bot_left) {
+        match (self.turn, self.bot_right.as_mut(), self.bot_left.as_mut()) {
             (Side::Left, _, Some(bot)) => bot.aim(pos),
             (Side::Right, Some(bot), _) => bot.aim(pos),
             _ => (),
@@ -678,7 +647,7 @@ impl Game {
             }
         }
 
-        if let Some(ref mut juice) = &mut self.juice {
+        if let Some(juice) = self.juice.as_mut() {
             *juice += JUICE_COUNTER;
             let y = 10.0 * (-2.0 * *juice).exp2() * juice.sin();
             let x = 0.2 * (-2.0 * *juice).exp2() * juice.sin();
