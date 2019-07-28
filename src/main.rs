@@ -16,6 +16,7 @@ use quicksilver::{
 use std::cell::RefCell;
 
 pub struct SharedAssets {
+    player_tiles: RefCell<Asset<Image>>,
     building_tiles: RefCell<Asset<Image>>,
     sky: RefCell<Asset<Image>>,
     explosion: RefCell<Asset<Image>>,
@@ -210,6 +211,7 @@ impl State for States {
                 explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
                 sky: RefCell::new(Asset::new(Image::load("Sky.png"))),
                 building_tiles: RefCell::new(Asset::new(Image::load("Buildings.png"))),
+                player_tiles: RefCell::new(Asset::new(Image::load("Player.png"))),
                 font: RefCell::new(Asset::new(Font::load("UI.ttf"))),
                 default_style: FontStyle::new(64.0, Color::WHITE),
                 hoover_style: FontStyle::new(64.0, Color::RED),

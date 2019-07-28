@@ -181,8 +181,8 @@ fn place_gorilla(side: Side, buildings: &[Building]) -> Rectangle {
     let b = buildings[i].bound_box;
     Rectangle::new(
         (
-            b.pos.x + b.size.x / 2.0 - GORILLA_SIZE.0 / 2.0,
-            b.pos.y - GORILLA_SIZE.1,
+            b.pos.x + b.size.x / 2.0 - GORILLA_SIZE.0 as f32 / 2.0,
+            b.pos.y - GORILLA_SIZE.1 as f32,
         ),
         GORILLA_SIZE,
     )
@@ -395,19 +395,40 @@ impl Game {
             //}
         }
 
-        // draw gorillas
-        window.draw_ex(
-            &self.round.gorilla_left,
-            Col(Color::RED),
-            Transform::IDENTITY,
-            3.0,
-        );
-        window.draw_ex(
-            &self.round.gorilla_right,
-            Col(Color::RED),
-            Transform::IDENTITY,
-            3.0,
-        );
+        shared.player_tiles.borrow_mut().execute(|img| {
+            // draw gorillas
+            let (index_left, index_right) = match (self.turn, self.shot.is_some() || self.explosion_state.is_some()) {
+                (_, false) => {
+                    (0,0)
+                },
+                (Side::Left, true) => {
+                    (1,0)
+                },
+                (Side::Right, true) => {
+                    (0,1)
+                },
+            };
+            window.draw_ex(
+                &self.round.gorilla_left,
+                Img(&img.subimage(Rectangle::new(
+                    (GORILLA_SIZE.0 * index_left, 0),
+                    GORILLA_SIZE,
+                ))),
+                Transform::IDENTITY,
+                3.0,
+            );
+            window.draw_ex(
+                &self.round.gorilla_right,
+                Img(&img.subimage(Rectangle::new(
+                    (GORILLA_SIZE.0 * index_right, 0),
+                    GORILLA_SIZE,
+                ))),
+                Transform::IDENTITY,
+                3.0,
+            );
+
+            Ok(())
+        })?;
 
         // draw shot
         if let Some((circle, _)) = self.shot {
@@ -492,7 +513,7 @@ impl Game {
                 let center = gorilla.pos + (gorilla.size / 2);
                 let dir = (self.mouse_pos - center).normalize();
                 self.shot = Some((
-                    Circle::new(center + dir * 4 * SHOT_RADIUS, SHOT_RADIUS),
+                    Circle::new(center + dir * 6 * SHOT_RADIUS, SHOT_RADIUS),
                     dir * 0.006 * self.counter as f32,
                 ));
             }
