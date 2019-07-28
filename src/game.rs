@@ -96,6 +96,7 @@ impl Round {
 struct Explosion {
     pos: Vector,
     frame: u32,
+    particles: Vec<(Vector, Vector, Color)>,
 }
 
 pub struct Game {
@@ -108,7 +109,7 @@ pub struct Game {
     turn: Side,
     points_left: u32,
     points_right: u32,
-    new_game: bool,
+    new_game: Option<Side>,
     juice: Option<f32>,
     mouse_pos: Vector,
     bot_right: Option<Bot>,
@@ -282,7 +283,7 @@ impl Game {
             turn: Side::Left,
             points_left: 0,
             points_right: 0,
-            new_game: false,
+            new_game: None,
             juice: None,
             mouse_pos: Vector::ZERO,
             bot_left,
@@ -314,11 +315,29 @@ impl Game {
         }
     }
 
-    fn on_explode(&mut self, pos: Vector) {
+    fn on_explode(&mut self, pos: Vector, particle_pos: Option<Vector>) {
+        let particles = if let Some(pos) = particle_pos {
+            let mut rng = rand::thread_rng();
+            (0..PARTICLE_COUNT)
+                .map(|_| {
+                    let color = Color::from_hex(PLAYER_PALETTE[rng.gen_range(0, PLAYER_PALETTE.len())]);
+                    let vel = Vector {
+                        x: rng.gen_range(-1.0, 1.0),
+                        y: rng.gen_range(-1.0, 1.0),
+                    };
+                    let vel = vel.normalize() * rng.gen_range(PARTICLE_MIN_VEL, PARTICLE_MAX_VEL);
+                    (pos, vel, color)
+                }).collect()
+        } else {
+            vec![]
+        };
+
         self.shot = None;
         self.explosion_state = Some(Explosion {
             pos: pos - EXPLOSION_HALF_VEC,
             frame: 0,
+            particles,
+
         });
         self.juice = Some(0.0);
     }
@@ -408,32 +427,57 @@ impl Game {
                     (0,1)
                 },
             };
-            window.draw_ex(
-                &self.round.gorilla_left,
-                Img(&img.subimage(Rectangle::new(
-                    (GORILLA_SIZE.0 * index_left, 0),
-                    GORILLA_SIZE,
-                ))),
-                Transform::IDENTITY,
-                3.0,
-            );
-            window.draw_ex(
-                &self.round.gorilla_right,
-                Img(&img.subimage(Rectangle::new(
-                    (GORILLA_SIZE.0 * index_right, 0),
-                    GORILLA_SIZE,
-                ))),
-                Transform::IDENTITY,
-                3.0,
-            );
-
+            match self.new_game {
+                None => {
+                    window.draw_ex(
+                        &self.round.gorilla_left,
+                        Img(&img.subimage(Rectangle::new(
+                            (GORILLA_SIZE.0 * index_left, 0),
+                            GORILLA_SIZE,
+                        ))),
+                        Transform::IDENTITY,
+                        3.0,
+                    );
+                    window.draw_ex(
+                        &self.round.gorilla_right,
+                        Img(&img.subimage(Rectangle::new(
+                            (GORILLA_SIZE.0 * index_right, 0),
+                            GORILLA_SIZE,
+                        ))),
+                        Transform::IDENTITY,
+                        3.0,
+                    );
+                },
+                Some(Side::Left) => {
+                    window.draw_ex(
+                        &self.round.gorilla_left,
+                        Img(&img.subimage(Rectangle::new(
+                            (GORILLA_SIZE.0 * index_left, 0),
+                            GORILLA_SIZE,
+                        ))),
+                        Transform::IDENTITY,
+                        3.0,
+                    );
+                },
+                Some(Side::Right) => {
+                    window.draw_ex(
+                        &self.round.gorilla_right,
+                        Img(&img.subimage(Rectangle::new(
+                            (GORILLA_SIZE.0 * index_right, 0),
+                            GORILLA_SIZE,
+                        ))),
+                        Transform::IDENTITY,
+                        3.0,
+                    );
+                },
+            }
             Ok(())
         })?;
 
         // draw shot
         if let Some((circle, _)) = self.shot {
             window.draw_ex(&circle, Col(Color::YELLOW), Transform::IDENTITY, 3.0);
-        } else if !self.new_game && self.shot.is_none() && self.explosion_state.is_none() {
+        } else if self.new_game.is_none() && self.shot.is_none() && self.explosion_state.is_none() {
             // draw aim
             let gorilla = self.gorilla_from_side(self.turn);
             let center = gorilla.pos + (gorilla.size / 2);
@@ -480,6 +524,19 @@ impl Game {
             }
             Ok(())
         })?;
+
+        // draw particles
+        if let Some(explosion) = &self.explosion_state {
+            for particle in &explosion.particles {
+                window.draw_ex(
+                    &Rectangle::new(particle.0, PARTICLE_SIZE),
+                    Col(particle.2),
+                    Transform::IDENTITY,
+                    5.0,
+                );
+            }
+        }
+        
 
         //draw score
         shared.font.borrow_mut().execute(|f| {
@@ -576,14 +633,20 @@ impl Game {
         }
 
         if let Some(ref mut state) = self.explosion_state {
+            for particle in state.particles.iter_mut() {
+                let (pos, speed) = update_shot(particle.0, particle.1);
+                particle.0 = pos;
+                particle.1 = speed;
+            }
+
             if state.frame / 2 == EXPLOSION_FRAMES {
                 self.explosion_state = None;
                 self.turn = next_side(self.turn);
-                if self.new_game {
+                if self.new_game.is_some() {
                     self.round = Round::new();
                     self.explosion_masks.clear();
                     self.reset_bots();
-                    self.new_game = false;
+                    self.new_game = None;
                     return Ok(());
                 }
             } else {
@@ -602,13 +665,15 @@ impl Game {
                         Side::Right => self.points_left += 1,
                     }
                     self.destroy_terrain(&circle, xs);
-                    self.on_explode(pos);
-                    self.new_game = true;
+                    let gorilla = self.gorilla_from_side(side);
+                    let gorilla = gorilla.pos + gorilla.size / 2;
+                    self.on_explode(pos, Some(gorilla));
+                    self.new_game = Some(next_side(side));
                 }
                 Collision::Buildings(xs) => {
                     self.update_aim(pos);
                     self.destroy_terrain(&circle, xs);
-                    self.on_explode(pos);
+                    self.on_explode(pos, None);
                 }
                 _ => {
                     self.update_aim(pos);

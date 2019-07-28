@@ -20,3 +20,21 @@ pub const TITLE: &str = "gorillas.rs";
 pub const PLAY: &str = "Play [Enter]";
 pub const BOT_COUNTER_MAX: i32 = 200;
 pub const BOT_AIM_INC_Y: f32 = 0.1;
+
+pub const PLAYER_PALETTE: [&str; 10] = [
+    "4a5462",
+    "4a5462",
+    "4a5462",
+    "4a5462",
+    "b3b9d1",
+    "b3b9d1",
+    "b3b9d1",
+    "b3b9d1",
+    "fad6b8",
+    "141013",
+];
+
+pub const PARTICLE_COUNT: u32 = 1024;
+pub const PARTICLE_MIN_VEL: f32 = 0.02;
+pub const PARTICLE_MAX_VEL: f32 = 0.3;
+pub const PARTICLE_SIZE: (u32, u32) = (2, 2);
