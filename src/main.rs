@@ -1,6 +1,6 @@
+mod circle;
 mod game;
 mod game_constants;
-mod circle;
 
 use crate::game::*;
 use crate::game_constants::*;

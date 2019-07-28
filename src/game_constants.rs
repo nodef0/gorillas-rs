@@ -22,15 +22,7 @@ pub const BOT_COUNTER_MAX: i32 = 200;
 pub const BOT_AIM_INC_Y: f32 = 0.1;
 
 pub const PLAYER_PALETTE: [&str; 10] = [
-    "4a5462",
-    "4a5462",
-    "4a5462",
-    "4a5462",
-    "b3b9d1",
-    "b3b9d1",
-    "b3b9d1",
-    "b3b9d1",
-    "fad6b8",
+    "4a5462", "4a5462", "4a5462", "4a5462", "b3b9d1", "b3b9d1", "b3b9d1", "b3b9d1", "fad6b8",
     "141013",
 ];
 

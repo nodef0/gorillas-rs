@@ -1,6 +1,6 @@
+use crate::circle::CircleF;
 use crate::game_constants::*;
 use crate::{GameConfig, SharedAssets};
-use crate::circle::CircleF;
 
 use quicksilver::{
     geom::{Circle, Line, Rectangle, Shape, Transform, Vector},
@@ -130,7 +130,7 @@ fn buildings() -> Vec<Building> {
         let pos_y = 16 * rng.gen_range(16, 32);
         let height = WINDOW_Y as u32 - pos_y;
         let width = 64 + 16 * rng.gen_range(0, 3);
-        let color_offset = 8 * rng.gen_range(0, 4); 
+        let color_offset = 8 * rng.gen_range(0, 4);
         let mut tiles = vec![color_offset];
         for _ in 1..width / 16 {
             tiles.push(1 + color_offset);
@@ -259,7 +259,6 @@ fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
     }
 }
 
-
 impl Game {
     pub fn new(config: GameConfig) -> Result<Self> {
         let round = Round::new();
@@ -320,14 +319,16 @@ impl Game {
             let mut rng = rand::thread_rng();
             (0..PARTICLE_COUNT)
                 .map(|_| {
-                    let color = Color::from_hex(PLAYER_PALETTE[rng.gen_range(0, PLAYER_PALETTE.len())]);
+                    let color =
+                        Color::from_hex(PLAYER_PALETTE[rng.gen_range(0, PLAYER_PALETTE.len())]);
                     let vel = Vector {
                         x: rng.gen_range(-1.0, 1.0),
                         y: rng.gen_range(-1.0, 1.0),
                     };
                     let vel = vel.normalize() * rng.gen_range(PARTICLE_MIN_VEL, PARTICLE_MAX_VEL);
                     (pos, vel, color)
-                }).collect()
+                })
+                .collect()
         } else {
             vec![]
         };
@@ -337,7 +338,6 @@ impl Game {
             pos: pos - EXPLOSION_HALF_VEC,
             frame: 0,
             particles,
-
         });
         self.juice = Some(0.0);
     }
@@ -359,7 +359,6 @@ impl Game {
 
         // draw sky
         shared.sky.borrow_mut().execute(|img| {
-
             for mask in &self.explosion_masks {
                 window.draw_ex(
                     &CircleF {
@@ -378,7 +377,7 @@ impl Game {
                 Transform::IDENTITY,
                 0.0,
             );
-            
+
             Ok(())
         })?;
 
@@ -389,17 +388,17 @@ impl Game {
             //        window.draw_ex(p, b.color, Transform::IDENTITY, 1.0);
             //    }
             //} else {
-                // window.draw_ex(&b.bound_box, b.color, Transform::IDENTITY, 1.0);
-                shared.building_tiles.borrow_mut().execute(|img| {
-                    let origin = b.bound_box.pos - Vector { x: 8.0, y: 0.0 };
-                    let tiles_in_x = b.bound_box.size.x as i32 / 16 + 1;
-                    for (i, tile) in b.tiles.iter().enumerate() {
-                        let tile_x = (tile % 4) * 16;
-                        let tile_y = (tile / 4) * 16;
+            // window.draw_ex(&b.bound_box, b.color, Transform::IDENTITY, 1.0);
+            shared.building_tiles.borrow_mut().execute(|img| {
+                let origin = b.bound_box.pos - Vector { x: 8.0, y: 0.0 };
+                let tiles_in_x = b.bound_box.size.x as i32 / 16 + 1;
+                for (i, tile) in b.tiles.iter().enumerate() {
+                    let tile_x = (tile % 4) * 16;
+                    let tile_y = (tile / 4) * 16;
 
-                        let pos_x = origin.x as i32 + (i as i32 % tiles_in_x) * 16;
-                        let pos_y = origin.y as i32 + (i as i32 / tiles_in_x) * 16;
-                        window.draw_ex(
+                    let pos_x = origin.x as i32 + (i as i32 % tiles_in_x) * 16;
+                    let pos_y = origin.y as i32 + (i as i32 / tiles_in_x) * 16;
+                    window.draw_ex(
                             &Rectangle::new((pos_x as i32, pos_y as i32), (16, 16)),
                             Img(&img.subimage(Rectangle::new(
                                 (tile_x as u32, tile_y as u32),
@@ -408,24 +407,21 @@ impl Game {
                             Transform::IDENTITY,
                             1.0,
                         );
-                    }
-                    Ok(())
-                })?;
+                }
+                Ok(())
+            })?;
             //}
         }
 
         shared.player_tiles.borrow_mut().execute(|img| {
             // draw gorillas
-            let (index_left, index_right) = match (self.turn, self.shot.is_some() || self.explosion_state.is_some()) {
-                (_, false) => {
-                    (0,0)
-                },
-                (Side::Left, true) => {
-                    (1,0)
-                },
-                (Side::Right, true) => {
-                    (0,1)
-                },
+            let (index_left, index_right) = match (
+                self.turn,
+                self.shot.is_some() || self.explosion_state.is_some(),
+            ) {
+                (_, false) => (0, 0),
+                (Side::Left, true) => (1, 0),
+                (Side::Right, true) => (0, 1),
             };
             match self.new_game {
                 None => {
@@ -447,7 +443,7 @@ impl Game {
                         Transform::IDENTITY,
                         3.0,
                     );
-                },
+                }
                 Some(Side::Left) => {
                     window.draw_ex(
                         &self.round.gorilla_left,
@@ -458,7 +454,7 @@ impl Game {
                         Transform::IDENTITY,
                         3.0,
                     );
-                },
+                }
                 Some(Side::Right) => {
                     window.draw_ex(
                         &self.round.gorilla_right,
@@ -469,7 +465,7 @@ impl Game {
                         Transform::IDENTITY,
                         3.0,
                     );
-                },
+                }
             }
             Ok(())
         })?;
@@ -536,7 +532,6 @@ impl Game {
                 );
             }
         }
-        
 
         //draw score
         shared.font.borrow_mut().execute(|f| {
