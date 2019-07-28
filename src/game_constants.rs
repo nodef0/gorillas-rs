@@ -29,7 +29,7 @@ pub const PLAYER_PALETTE: [&str; 10] = [
     "141013",
 ];
 
-pub const PARTICLE_COUNT: u32 = 1024;
+pub const PARTICLE_COUNT: usize = 1024;
 pub const PARTICLE_MIN_VEL: f32 = 0.02;
 pub const PARTICLE_MAX_VEL: f32 = 0.3;
 pub const PARTICLE_SIZE: (u32, u32) = (2, 2);

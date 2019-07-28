@@ -45,13 +45,14 @@ struct Round {
 struct Explosion {
     pos: Vector,
     frame: u32,
-    particles: Vec<(Vector, Vector, Color)>,
+    particles: Option<Vec<(Vector, Vector, Color)>>,
 }
 
 pub struct Game {
     round: Round,
     counting: bool,
     counter: i32,
+    particle_buffer: Option<Vec<(Vector, Vector, Color)>>,
     explosion_state: Option<Explosion>,
     explosion_masks: Vec<Circle>,
     shot: Option<(Circle, Vector)>,
@@ -209,17 +210,15 @@ fn remove_parts(circle: &Circle, parts: &mut Vec<Rectangle>) {
 fn collide_shot(circle: Circle, buildings: &[Building]) -> Vec<usize> {
     let mut v = vec![];
     for (i, building) in buildings.iter().enumerate() {
-        match building.parts.as_ref() {
-            None => {
-                if circle.overlaps(&building.bound_box) {
-                    v.push(i);
-                }
-            }
-            Some(xs) => {
-                for x in xs {
-                    if circle.overlaps(x) {
-                        v.push(i);
-                        break;
+        if circle.overlaps(&building.bound_box) {
+            match building.parts.as_ref() {
+                None => v.push(i),
+                Some(xs) => {
+                    for x in xs {
+                        if circle.overlaps(x) {
+                            v.push(i);
+                            break;
+                        }
                     }
                 }
             }
@@ -272,10 +271,13 @@ impl Game {
         } else {
             None
         };
+        let mut particle_buffer = Vec::new();
+        particle_buffer.reserve(PARTICLE_COUNT);
         Ok(Game {
             round,
             counting: false,
             counter: 0i32,
+            particle_buffer: Some(particle_buffer),
             explosion_state: None,
             explosion_masks: vec![],
             shot: None,
@@ -317,21 +319,20 @@ impl Game {
 
     fn on_explode(&mut self, pos: Vector, particle_pos: Option<Vector>) {
         let particles = if let Some(pos) = particle_pos {
+            let mut buffer = self.particle_buffer.take().unwrap(); // invariant, we always have a particle buffer
             let mut rng = rand::thread_rng();
-            (0..PARTICLE_COUNT)
-                .map(|_| {
-                    let color =
-                        Color::from_hex(PLAYER_PALETTE[rng.gen_range(0, PLAYER_PALETTE.len())]);
-                    let vel = Vector {
-                        x: rng.gen_range(-1.0, 1.0),
-                        y: rng.gen_range(-1.0, 1.0),
-                    };
-                    let vel = vel.normalize() * rng.gen_range(PARTICLE_MIN_VEL, PARTICLE_MAX_VEL);
-                    (pos, vel, color)
-                })
-                .collect()
+            for _ in 0..PARTICLE_COUNT {
+                let color = Color::from_hex(PLAYER_PALETTE[rng.gen_range(0, PLAYER_PALETTE.len())]);
+                let vel = Vector {
+                    x: rng.gen_range(-1.0, 1.0),
+                    y: rng.gen_range(-1.0, 1.0),
+                };
+                let vel = vel.normalize() * rng.gen_range(PARTICLE_MIN_VEL, PARTICLE_MAX_VEL);
+                buffer.push((pos, vel, color));
+            }
+            Some(buffer)
         } else {
-            vec![]
+            None
         };
 
         self.shot = None;
@@ -493,13 +494,15 @@ impl Game {
                     4.0,
                 );
                 // draw particles
-                for particle in explosion.particles.iter() {
-                    window.draw_ex(
-                        &Rectangle::new(particle.0, PARTICLE_SIZE),
-                        Col(particle.2),
-                        Transform::IDENTITY,
-                        5.0,
-                    );
+                if let Some(particles) = explosion.particles.as_ref() {
+                    for particle in particles.iter() {
+                        window.draw_ex(
+                            &Rectangle::new(particle.0, PARTICLE_SIZE),
+                            Col(particle.2),
+                            Transform::IDENTITY,
+                            5.0,
+                        );
+                    }
                 }
             }
             Ok(())
@@ -596,14 +599,21 @@ impl Game {
             }
         }
 
-        if let Some(ref mut state) = self.explosion_state {
-            for particle in state.particles.iter_mut() {
-                let (pos, speed) = update_shot(particle.0, particle.1);
-                particle.0 = pos;
-                particle.1 = speed;
+        if let Some(state) = self.explosion_state.as_mut() {
+            if let Some(particles) = state.particles.as_mut() {
+                for particle in particles.iter_mut() {
+                    let (pos, speed) = update_shot(particle.0, particle.1);
+                    particle.0 = pos;
+                    particle.1 = speed;
+                }
             }
 
             if state.frame / 2 == EXPLOSION_FRAMES {
+                let buffer = state.particles.take();
+                if let Some(mut buffer) = buffer {
+                    buffer.clear();
+                    self.particle_buffer = Some(buffer);
+                }
                 self.explosion_state = None;
                 self.turn = next_side(self.turn);
                 if self.new_game.is_some() {
