@@ -414,10 +414,7 @@ impl Game {
 
         shared.player_tiles.borrow_mut().execute(|img| {
             // draw gorillas
-            let (index_left, index_right) = match (
-                self.turn,
-                self.shot.is_some() || self.explosion_state.is_some(),
-            ) {
+            let (index_left, index_right) = match (self.turn, self.shot_in_progress()) {
                 (_, false) => (0, 0),
                 (Side::Left, true) => (1, 0),
                 (Side::Right, true) => (0, 1),
@@ -527,12 +524,12 @@ impl Game {
     }
 
     fn event_player(&mut self, event: &Event) {
-        match (event, self.counting, self.shot) {
+        match (event, self.counting, self.shot_in_progress()) {
             (Event::MouseMoved(pos), _, _) => self.mouse_pos = *pos,
-            (Event::MouseButton(MouseButton::Left, ButtonState::Pressed), false, None) => {
+            (Event::MouseButton(MouseButton::Left, ButtonState::Pressed), false, false) => {
                 self.counting = true;
             }
-            (Event::MouseButton(MouseButton::Left, ButtonState::Released), true, None) => {
+            (Event::MouseButton(MouseButton::Left, ButtonState::Released), true, false) => {
                 let center = self.gorilla_from_side(self.turn).center();
                 let dir = (self.mouse_pos - center).normalize();
                 self.counting = false;
@@ -582,6 +579,10 @@ impl Game {
             (Side::Right, Some(bot), _) => bot.aim(pos),
             _ => (),
         };
+    }
+
+    fn shot_in_progress(&self) -> bool {
+        self.shot.is_some() || self.explosion_state.is_some()
     }
 
     pub fn update(&mut self, window: &mut Window) -> Result<()> {
