@@ -39,6 +39,8 @@ struct Round {
     buildings: Vec<Building>,
     gorilla_left: Rectangle,
     gorilla_right: Rectangle,
+    wind: Vector,
+    rain: Vec<Vector>,
 }
 
 struct Explosion {
@@ -113,10 +115,25 @@ impl Round {
         let buildings = Building::buildings();
         let gorilla_left = place_gorilla(Side::Left, &buildings);
         let gorilla_right = place_gorilla(Side::Right, &buildings);
+        let mut rng = rand::thread_rng();
+        let x = rng.gen_range(-1.0, 1.0);
+        let y = rng.gen_range(0.0, 0.25); // do not consider upwards wind
+        let strength = rng.gen_range(1.0, 2.0);
+        let wind = Vector::new(x, y).normalize() * strength;
+        let rain = (0..128)
+            .map(|_| {
+                Vector::new(
+                    rng.gen_range(0.0, 1.0) * WINDOW_X,
+                    rng.gen_range(0.0, 1.0) * WINDOW_Y,
+                )
+            })
+            .collect::<Vec<_>>();
         Round {
             buildings,
             gorilla_left,
             gorilla_right,
+            wind,
+            rain,
         }
     }
 }
@@ -163,6 +180,13 @@ fn update_shot(pos: Vector, speed: Vector) -> (Vector, Vector) {
     (
         Vector::new(pos.x + DELTAT_MS * speed.x, pos.y + DELTAT_MS * speed.y),
         Vector::new(speed.x, speed.y + GRAVITY),
+    )
+}
+
+fn update_shot_windy(pos: Vector, speed: Vector, wind: Vector) -> (Vector, Vector) {
+    (
+        Vector::new(pos.x + DELTAT_MS * speed.x, pos.y + DELTAT_MS * speed.y),
+        Vector::new(wind.x + speed.x, wind.y + speed.y + GRAVITY),
     )
 }
 
@@ -359,7 +383,6 @@ impl Game {
         // draw sky
         shared.sky.borrow_mut().execute(|img| {
             for mask in self.explosion_masks.iter() {
-                // TODO: update once upstream is fixed
                 window.draw_ex(
                     mask,
                     Img(&img.subimage(mask.bounding_box())),
@@ -499,6 +522,25 @@ impl Game {
             Ok(())
         })?;
 
+        //window.draw_ex(
+        //        &Line::new(WIND_ORIGIN, WIND_ORIGIN + self.round.wind * WIND_SHOW_RATIO)
+        //            .with_thickness(4.0),
+        //        Col(Color::YELLOW),
+        //        Transform::IDENTITY,
+        //        4.0,
+        //    );
+
+        let wind_norm = self.round.wind.normalize();
+
+        for drop in self.round.rain.iter() {
+            window.draw_ex(
+                &Line::new(*drop, *drop + wind_norm * WIND_SHOW_RATIO).with_thickness(2.0),
+                Col(Color::from_hex("dae0ea")),
+                Transform::IDENTITY,
+                6.0,
+            );
+        }
+
         //draw score
         shared.font.borrow_mut().execute(|f| {
             if let Ok(ref text) = f.render(
@@ -624,7 +666,8 @@ impl Game {
         }
 
         if let Some((mut circle, prev_speed)) = self.shot {
-            let (pos, speed) = update_shot(circle.pos, prev_speed);
+            let (pos, speed) =
+                update_shot_windy(circle.pos, prev_speed, self.round.wind * WIND_PLAY_RATIO);
             circle.pos = pos;
             match self.collision(circle) {
                 Collision::None => self.shot = Some((circle, speed)),
@@ -649,6 +692,22 @@ impl Game {
                     self.turn = next_side(self.turn);
                     self.shot = None;
                 }
+            }
+        }
+
+        for drop in self.round.rain.iter_mut() {
+            *drop += (self.round.wind + Vector::new(0.0, GRAVITY)) * WIND_SHOW_RATIO;
+            let mut rng = rand::thread_rng();
+            if drop.y > WINDOW_Y {
+                drop.x = rng.gen_range(0.0, 1.0) * WINDOW_X;
+                drop.y = 0.0;
+            } else if drop.x < 0.0 {
+                drop.x = WINDOW_X;
+                drop.y = rng.gen_range(0.0, 1.0) * WINDOW_Y;
+            }
+            if drop.x > WINDOW_X {
+                drop.x = 0.0;
+                drop.y = rng.gen_range(0.0, 1.0) * WINDOW_Y;
             }
         }
 

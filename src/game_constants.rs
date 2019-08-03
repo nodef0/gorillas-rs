@@ -33,3 +33,7 @@ pub const PARTICLE_COUNT: usize = 1024;
 pub const PARTICLE_MIN_VEL: f32 = 0.02;
 pub const PARTICLE_MAX_VEL: f32 = 0.3;
 pub const PARTICLE_SIZE: (u32, u32) = (2, 2);
+
+//pub const WIND_ORIGIN: Vector  = Vector { x: 50.0, y: 50.0 };
+pub const WIND_SHOW_RATIO: f32 = 5.0;
+pub const WIND_PLAY_RATIO: f32 = 0.003;
