@@ -1,4 +1,3 @@
-use crate::circle::CircleF;
 use crate::game_constants::*;
 use crate::{GameConfig, SharedAssets};
 
@@ -271,13 +270,11 @@ impl Game {
         } else {
             None
         };
-        let mut particle_buffer = Vec::new();
-        particle_buffer.reserve(PARTICLE_COUNT);
         Ok(Game {
             round,
             counting: false,
             counter: 0i32,
-            particle_buffer: Some(particle_buffer),
+            particle_buffer: Some(Vec::with_capacity(PARTICLE_COUNT)),
             explosion_state: None,
             explosion_masks: vec![],
             shot: None,
@@ -361,13 +358,10 @@ impl Game {
 
         // draw sky
         shared.sky.borrow_mut().execute(|img| {
-            for mask in &self.explosion_masks {
+            for mask in self.explosion_masks.iter() {
                 // TODO: update once upstream is fixed
                 window.draw_ex(
-                    &CircleF {
-                        pos: mask.pos,
-                        radius: mask.radius,
-                    },
+                    mask,
                     Img(&img.subimage(mask.bounding_box())),
                     Transform::IDENTITY,
                     2.0,
