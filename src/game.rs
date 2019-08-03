@@ -56,7 +56,7 @@ pub struct Game {
     particle_buffer: Option<Vec<(Vector, Vector, Color)>>,
     explosion_state: Option<Explosion>,
     explosion_masks: Vec<Circle>,
-    shot: Option<(Circle, Vector)>,
+    shot: Option<(Circle, Vector, f32)>,
     turn: Side,
     points_left: u32,
     points_right: u32,
@@ -401,8 +401,8 @@ impl Game {
             Ok(())
         })?;
 
-        //draw buildings
         shared.building_tiles.borrow_mut().execute(|img| {
+            //draw buildings
             for b in self.round.buildings.iter() {
                 let origin = b.bound_box.pos
                     - Vector {
@@ -426,6 +426,31 @@ impl Game {
                     );
                 }
             }
+
+            // draw shot
+            if let Some((circle, _, angle)) = self.shot {
+                window.draw_ex(
+                        &circle.bounding_box(),
+                        Img(&img.subimage(Rectangle::new(BANANA_LOC, BANANA_SIZE))),
+                        Transform::rotate(angle), 
+                        3.0);
+            } else if self.new_game.is_none() && self.shot.is_none() && self.explosion_state.is_none() {
+                // draw aim
+                let center = self.gorilla_from_side(self.turn).center();
+                let dir = match (self.turn, &self.bot_left, &self.bot_right) {
+                    (Side::Left, Some(bot), _) => bot.dir,
+                    (Side::Right, _, Some(bot)) => bot.dir,
+                    _ => (self.mouse_pos - center).normalize(),
+                };
+                window.draw_ex(
+                    &Line::new(center + (dir * START_OFFSET), center + (dir * END_OFFSET))
+                        .with_thickness(4.0),
+                    Col(Color::YELLOW),
+                    Transform::IDENTITY,
+                    4.0,
+                );
+            }
+
             Ok(())
         })?;
 
@@ -461,25 +486,6 @@ impl Game {
             Ok(())
         })?;
 
-        // draw shot
-        if let Some((circle, _)) = self.shot {
-            window.draw_ex(&circle, Col(Color::YELLOW), Transform::IDENTITY, 3.0);
-        } else if self.new_game.is_none() && self.shot.is_none() && self.explosion_state.is_none() {
-            // draw aim
-            let center = self.gorilla_from_side(self.turn).center();
-            let dir = match (self.turn, &self.bot_left, &self.bot_right) {
-                (Side::Left, Some(bot), _) => bot.dir,
-                (Side::Right, _, Some(bot)) => bot.dir,
-                _ => (self.mouse_pos - center).normalize(),
-            };
-            window.draw_ex(
-                &Line::new(center + (dir * START_OFFSET), center + (dir * END_OFFSET))
-                    .with_thickness(4.0),
-                Col(Color::YELLOW),
-                Transform::IDENTITY,
-                4.0,
-            );
-        }
 
         let power = match (self.turn, self.bot_left.as_ref(), self.bot_right.as_ref()) {
             (Side::Left, Some(bot), _) => bot.counter,
@@ -532,9 +538,9 @@ impl Game {
 
         let wind_norm = self.round.wind.normalize();
 
-        for drop in self.round.rain.iter() {
+        for &drop in self.round.rain.iter() {
             window.draw_ex(
-                &Line::new(*drop, *drop + wind_norm * WIND_SHOW_RATIO).with_thickness(2.0),
+                &Line::new(drop, drop + wind_norm * WIND_SHOW_RATIO).with_thickness(2.0),
                 Col(Color::from_hex("dae0ea")),
                 Transform::IDENTITY,
                 6.0,
@@ -572,6 +578,7 @@ impl Game {
                 self.shot = Some((
                     Circle::new(center + dir * 6 * SHOT_RADIUS, SHOT_RADIUS),
                     dir * 0.006 * self.counter as f32,
+                    0.0,
                 ));
             }
             _ => (),
@@ -586,7 +593,7 @@ impl Game {
         }
     }
 
-    fn update_bot(bot: &mut Bot, center: Vector) -> Option<(Circle, Vector)> {
+    fn update_bot(bot: &mut Bot, center: Vector) -> Option<(Circle, Vector, f32)> {
         bot.counter = cmp::min(bot.counter + 3, BOT_COUNTER_MAX);
         if bot.counter == BOT_COUNTER_MAX {
             let power = bot.counter;
@@ -594,6 +601,7 @@ impl Game {
             Some((
                 Circle::new(center + bot.dir * 4 * SHOT_RADIUS, SHOT_RADIUS),
                 bot.dir * 0.006 * power,
+                0.0,
             ))
         } else {
             None
@@ -665,12 +673,13 @@ impl Game {
             }
         }
 
-        if let Some((mut circle, prev_speed)) = self.shot {
+        if let Some((mut circle, prev_speed, mut angle)) = self.shot {
             let (pos, speed) =
                 update_shot_windy(circle.pos, prev_speed, self.round.wind * WIND_PLAY_RATIO);
             circle.pos = pos;
+            angle += BANANA_ANG_SPEED;
             match self.collision(circle) {
-                Collision::None => self.shot = Some((circle, speed)),
+                Collision::None => self.shot = Some((circle, speed, angle)),
                 Collision::Player(side, xs) => {
                     match side {
                         Side::Left => self.points_right += 1,

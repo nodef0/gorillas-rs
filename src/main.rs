@@ -210,7 +210,7 @@ impl State for States {
                 explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
                 sky: RefCell::new(Asset::new(Image::load("Sky.png"))),
                 building_tiles: RefCell::new(Asset::new(Image::load("Buildings.png"))),
-                player_tiles: RefCell::new(Asset::new(Image::load("Player.png"))),
+                player_tiles: RefCell::new(Asset::new(Image::load("Bowtie.png"))),
                 font: RefCell::new(Asset::new(Font::load("UI.ttf"))),
                 default_style: FontStyle::new(64.0, Color::WHITE),
                 hoover_style: FontStyle::new(64.0, Color::RED),

@@ -37,3 +37,7 @@ pub const PARTICLE_SIZE: (u32, u32) = (2, 2);
 //pub const WIND_ORIGIN: Vector  = Vector { x: 50.0, y: 50.0 };
 pub const WIND_SHOW_RATIO: f32 = 5.0;
 pub const WIND_PLAY_RATIO: f32 = 0.003;
+
+pub const BANANA_SIZE: (u32, u32) = (20, 20); 
+pub const BANANA_LOC: (u32, u32) = (0, 128);
+pub const BANANA_ANG_SPEED: f32 = 5.0;
