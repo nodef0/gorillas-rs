@@ -419,12 +419,11 @@ impl Game {
     }
 
     pub fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
-        window.clear(Color::BLACK)?;
         if self.round.surface.is_none() {
-            shared.sky.borrow_mut().execute(|sky| {
-                //draw sky
-                let surface = Surface::new(800, 600)?;
-                surface.render_to(window, |w| {
+            let surface = Surface::new(800, 600)?;
+            surface.render_to(window, |w| {
+                shared.sky.borrow_mut().execute(|sky| {
+                    //draw sky
                     w.clear(Color::BLACK)?;
                     w.draw_ex(
                         &Rectangle::new_sized(w.screen_size()),
@@ -434,13 +433,7 @@ impl Game {
                     );
                     Ok(())
                 })?;
-                self.round.surface = Some(surface);
-
-                Ok(())
-            })?;
-
-            shared.building_tiles.borrow_mut().execute(|img| {
-                if let Some(surface) = self.round.surface.as_mut() {
+                shared.building_tiles.borrow_mut().execute(|img| {
                     for b in self.round.buildings.iter() {
                         let origin = b.bound_box.pos
                             - Vector {
@@ -456,20 +449,19 @@ impl Game {
 
                             let pos_x = origin.x as i32 + ((i % tiles_in_x) * TILE_SIZE.0) as i32;
                             let pos_y = origin.y as i32 + ((i / tiles_in_x) * TILE_SIZE.1) as i32;
-                            surface.render_to(window, |w| {
-                                w.draw_ex(
-                                    &Rectangle::new((pos_x, pos_y), TILE_SIZE),
-                                    Img(&img.subimage(Rectangle::new((tile_x, tile_y), TILE_SIZE))),
-                                    Transform::IDENTITY,
-                                    1.0,
-                                );
-                                Ok(())
-                            })?;
+                            w.draw_ex(
+                                &Rectangle::new((pos_x, pos_y), TILE_SIZE),
+                                Img(&img.subimage(Rectangle::new((tile_x, tile_y), TILE_SIZE))),
+                                Transform::IDENTITY,
+                                1.0,
+                            );
                         }
                     }
-                }
+                    Ok(())
+                })?;
                 Ok(())
             })?;
+            self.round.surface = Some(surface);
         }
 
         if let Some(surface) = self.round.surface.as_ref() {
