@@ -5,7 +5,7 @@ use quicksilver::{
     geom::{Circle, Line, Rectangle, Shape, Transform, Vector},
     graphics::{
         Background::{Col, Img},
-        Color, View,
+        Color, Surface, View,
     },
     input::{ButtonState, MouseButton},
     lifecycle::{Event, Window},
@@ -41,6 +41,7 @@ struct Round {
     gorilla_right: Rectangle,
     wind: Vector,
     rain: Vec<Vector>,
+    surface: Option<Surface>,
 }
 
 struct Explosion {
@@ -135,6 +136,7 @@ impl Round {
             gorilla_right,
             wind,
             rain,
+            surface: None,
         }
     }
 }
@@ -418,54 +420,81 @@ impl Game {
 
     pub fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
         window.clear(Color::BLACK)?;
+        if self.round.surface.is_none() {
+            shared.sky.borrow_mut().execute(|sky| {
+                //draw sky
+                let surface = Surface::new(800, 600)?;
+                surface.render_to(window, |w| {
+                    w.clear(Color::BLACK)?;
+                    w.draw_ex(
+                        &Rectangle::new_sized(w.screen_size()),
+                        Img(&sky),
+                        Transform::IDENTITY,
+                        0.0,
+                    );
+                    Ok(())
+                })?;
+                self.round.surface = Some(surface);
 
-        // draw sky
-        shared.sky.borrow_mut().execute(|img| {
+                Ok(())
+            })?;
+
+            shared.building_tiles.borrow_mut().execute(|img| {
+                if let Some(surface) = self.round.surface.as_mut() {
+                    for b in self.round.buildings.iter() {
+                        let origin = b.bound_box.pos
+                            - Vector {
+                                x: TILE_SIZE.0 as f32 / 2.0,
+                                y: 0.0,
+                            };
+                        let tiles_in_x = b.bound_box.size.x as u32 / TILE_SIZE.0 + 1;
+                        for (i, tile) in b.tiles.iter().enumerate() {
+                            let tile = *tile as u32;
+                            let i = i as u32;
+                            let tile_x = (tile % 4) * TILE_SIZE.0;
+                            let tile_y = (tile / 4) * TILE_SIZE.1;
+
+                            let pos_x = origin.x as i32 + ((i % tiles_in_x) * TILE_SIZE.0) as i32;
+                            let pos_y = origin.y as i32 + ((i / tiles_in_x) * TILE_SIZE.1) as i32;
+                            surface.render_to(window, |w| {
+                                w.draw_ex(
+                                    &Rectangle::new((pos_x, pos_y), TILE_SIZE),
+                                    Img(&img.subimage(Rectangle::new((tile_x, tile_y), TILE_SIZE))),
+                                    Transform::IDENTITY,
+                                    1.0,
+                                );
+                                Ok(())
+                            })?;
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+        }
+
+        if let Some(surface) = self.round.surface.as_ref() {
+            window.draw_ex(
+                &Rectangle::new_sized(window.screen_size()),
+                Img(surface.image()),
+                Transform::IDENTITY,
+                1.0,
+            );
+        }
+
+        shared.sky.borrow_mut().execute(|sky| {
+            //draw sky
             for mask in self.explosion_masks.iter() {
                 window.draw_ex(
                     mask,
-                    Img(&img.subimage(mask.bounding_box())),
+                    Img(&sky.subimage(mask.bounding_box())),
                     Transform::IDENTITY,
                     2.0,
                 );
             }
-
-            window.draw_ex(
-                &Rectangle::new_sized(window.screen_size()),
-                Img(&img),
-                Transform::IDENTITY,
-                0.0,
-            );
-
             Ok(())
         })?;
 
         shared.building_tiles.borrow_mut().execute(|img| {
-            //draw buildings
-            for b in self.round.buildings.iter() {
-                let origin = b.bound_box.pos
-                    - Vector {
-                        x: TILE_SIZE.0 as f32 / 2.0,
-                        y: 0.0,
-                    };
-                let tiles_in_x = b.bound_box.size.x as u32 / TILE_SIZE.0 + 1;
-                for (i, tile) in b.tiles.iter().enumerate() {
-                    let tile = *tile as u32;
-                    let i = i as u32;
-                    let tile_x = (tile % 4) * TILE_SIZE.0;
-                    let tile_y = (tile / 4) * TILE_SIZE.1;
-
-                    let pos_x = origin.x as i32 + ((i % tiles_in_x) * TILE_SIZE.0) as i32;
-                    let pos_y = origin.y as i32 + ((i / tiles_in_x) * TILE_SIZE.1) as i32;
-                    window.draw_ex(
-                        &Rectangle::new((pos_x, pos_y), TILE_SIZE),
-                        Img(&img.subimage(Rectangle::new((tile_x, tile_y), TILE_SIZE))),
-                        Transform::IDENTITY,
-                        1.0,
-                    );
-                }
-            }
-
             // draw shot
             if let Some((circle, _, angle)) = self.shot {
                 window.draw_ex(
