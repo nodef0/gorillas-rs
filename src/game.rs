@@ -65,6 +65,7 @@ pub struct Game {
     mouse_pos: Vector,
     bot_right: Option<Bot>,
     bot_left: Option<Bot>,
+    pools: Vec<Option<Vec<Rectangle>>>,
 }
 
 struct Building {
@@ -111,8 +112,8 @@ impl Bot {
 }
 
 impl Round {
-    fn new() -> Self {
-        let buildings = Building::buildings();
+    fn new(pools: &mut Vec<Option<Vec<Rectangle>>>) -> Self {
+        let buildings = Building::buildings(pools);
         let gorilla_left = place_gorilla(Side::Left, &buildings);
         let gorilla_right = place_gorilla(Side::Right, &buildings);
         let mut rng = rand::thread_rng();
@@ -139,11 +140,11 @@ impl Round {
 }
 
 impl Building {
-    fn buildings() -> Vec<Building> {
+    fn buildings(pools: &mut Vec<Option<Vec<Rectangle>>>) -> Vec<Building> {
         let mut b = vec![];
         let mut rng = rand::thread_rng();
         let mut last_x = 0;
-        loop {
+        for pool in pools.iter_mut() {
             let pos_y = TILE_SIZE.1 * rng.gen_range(16, 32);
             let height = WINDOW_Y as u32 - pos_y;
             let width = 64 + TILE_SIZE.0 * rng.gen_range(0, 3);
@@ -162,9 +163,18 @@ impl Building {
                 tiles.push(4 + color_offset);
             }
 
+            let bound_box = Rectangle::new((last_x, pos_y), (width, height));
+
+            let mut parts = pool.take();
+            if let Some(part) = parts.as_mut() {
+                part.push(bound_box);
+            } else {
+                eprintln!("ERROR: No mem in pools!");
+            }
+
             b.push(Building {
-                bound_box: Rectangle::new((last_x, pos_y), (width, height)),
-                parts: None,
+                bound_box,
+                parts,
                 tiles,
             });
             last_x += width + 8;
@@ -225,22 +235,45 @@ fn remove_parts(circle: &Circle, parts: &mut Vec<Rectangle>) {
         .filter(|x| circle.overlaps(x))
         .collect::<Vec<_>>();
     parts.retain(|x| !circle.overlaps(x));
-    for i in overlap {
-        parts.extend(create_parts(&circle, &i));
+    for i in overlap.iter() {
+        parts.extend(create_parts(&circle, i));
     }
 }
 
+fn collide_buildings(circle: Circle, buildings: &[Building]) -> bool {
+    for building in buildings.iter() {
+        if circle.overlaps(&building.bound_box) {
+            if let Some(parts) = building.parts.as_ref() {
+                match parts.len() {
+                    1 => return true,
+                    _ => {
+                        for x in parts.iter() {
+                            if circle.overlaps(x) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+// returns the index of the buildings affected by the shot
 fn collide_shot(circle: Circle, buildings: &[Building]) -> Vec<usize> {
     let mut v = vec![];
     for (i, building) in buildings.iter().enumerate() {
         if circle.overlaps(&building.bound_box) {
-            match building.parts.as_ref() {
-                None => v.push(i),
-                Some(xs) => {
-                    for x in xs {
-                        if circle.overlaps(x) {
-                            v.push(i);
-                            break;
+            if let Some(parts) = building.parts.as_ref() {
+                match parts.len() {
+                    1 => v.push(i),
+                    _ => {
+                        for x in parts.iter() {
+                            if circle.overlaps(x) {
+                                v.push(i);
+                                break;
+                            }
                         }
                     }
                 }
@@ -283,7 +316,12 @@ fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
 
 impl Game {
     pub fn new(config: GameConfig) -> Result<Self> {
-        let round = Round::new();
+        let mut pools = vec![];
+        for _ in 0..11 {
+            pools.push(Some(Vec::with_capacity(512)));
+        }
+
+        let round = Round::new(&mut pools);
         let bot_left = if config.bot_left {
             Some(Bot::new(Side::Left, &round))
         } else {
@@ -294,6 +332,7 @@ impl Game {
         } else {
             None
         };
+
         Ok(Game {
             round,
             counting: false,
@@ -310,6 +349,7 @@ impl Game {
             mouse_pos: Vector::ZERO,
             bot_left,
             bot_right,
+            pools,
         })
     }
 
@@ -321,9 +361,9 @@ impl Game {
     }
 
     fn collision(&self, circle: Circle) -> Collision {
-        let hits = collide_shot(circle, &self.round.buildings);
+        let hits = collide_buildings(circle, &self.round.buildings);
         let explosion = Circle::new(circle.pos, circle.radius * 4.0);
-        if !hits.is_empty() {
+        if hits {
             Collision::Buildings(collide_shot(explosion, &self.round.buildings))
         } else if collide_field(circle.pos) {
             Collision::Sky
@@ -369,9 +409,8 @@ impl Game {
         let explosion = Circle::new(circle.pos, circle.radius * EXPLOSION_DESTROY_SCALE);
         for i in xs {
             let building = &mut self.round.buildings[i];
-            match building.parts.as_mut() {
-                None => building.parts = Some(create_parts(&explosion, &building.bound_box)),
-                Some(parts) => remove_parts(&explosion, parts),
+            if let Some(parts) = building.parts.as_mut() {
+                remove_parts(&explosion, parts);
             }
         }
         self.explosion_masks.push(explosion);
@@ -430,11 +469,15 @@ impl Game {
             // draw shot
             if let Some((circle, _, angle)) = self.shot {
                 window.draw_ex(
-                        &circle.bounding_box(),
-                        Img(&img.subimage(Rectangle::new(BANANA_LOC, BANANA_SIZE))),
-                        Transform::rotate(angle), 
-                        3.0);
-            } else if self.new_game.is_none() && self.shot.is_none() && self.explosion_state.is_none() {
+                    &circle.bounding_box(),
+                    Img(&img.subimage(Rectangle::new(BANANA_LOC, BANANA_SIZE))),
+                    Transform::rotate(angle),
+                    3.0,
+                );
+            } else if self.new_game.is_none()
+                && self.shot.is_none()
+                && self.explosion_state.is_none()
+            {
                 // draw aim
                 let center = self.gorilla_from_side(self.turn).center();
                 let dir = match (self.turn, &self.bot_left, &self.bot_right) {
@@ -485,7 +528,6 @@ impl Game {
             }
             Ok(())
         })?;
-
 
         let power = match (self.turn, self.bot_left.as_ref(), self.bot_right.as_ref()) {
             (Side::Left, Some(bot), _) => bot.counter,
@@ -662,7 +704,15 @@ impl Game {
                 self.explosion_state = None;
                 self.turn = next_side(self.turn);
                 if self.new_game.is_some() {
-                    self.round = Round::new();
+                    for (i, building) in self.round.buildings.iter_mut().enumerate() {
+                        if building.parts.is_some() {
+                            self.pools[i] = building.parts.take();
+                            if let Some(x) = self.pools[i].as_mut() {
+                                x.clear();
+                            }
+                        }
+                    }
+                    self.round = Round::new(&mut self.pools);
                     self.explosion_masks.clear();
                     self.reset_bots();
                     self.new_game = None;
