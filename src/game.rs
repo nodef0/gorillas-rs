@@ -64,13 +64,11 @@ pub struct Game {
     mouse_pos: Vector,
     bot_right: Option<Bot>,
     bot_left: Option<Bot>,
-    pools: Vec<Option<Vec<Rectangle>>>,
 }
 
 struct Building {
     bound_box: Rectangle,
     tiles: Vec<usize>, // indicies into the tilemap
-    parts: Option<Vec<Rectangle>>,
 }
 
 impl Bot {
@@ -111,7 +109,7 @@ impl Bot {
 }
 
 impl Round {
-    fn new(pools: &mut Vec<Option<Vec<Rectangle>>>) -> Self {
+    fn new(pools: &mut [Vec<Rectangle>]) -> Self {
         let buildings = Building::buildings(pools);
         let gorilla_left = place_gorilla(Side::Left, &buildings);
         let gorilla_right = place_gorilla(Side::Right, &buildings);
@@ -140,11 +138,11 @@ impl Round {
 }
 
 impl Building {
-    fn buildings(pools: &mut Vec<Option<Vec<Rectangle>>>) -> Vec<Building> {
+    fn buildings(pools: &mut [Vec<Rectangle>]) -> Vec<Building> {
         let mut b = vec![];
         let mut rng = rand::thread_rng();
         let mut last_x = 0;
-        for pool in pools.iter_mut() {
+        for pool in pools {
             let pos_y = TILE_SIZE.1 * rng.gen_range(16, 32);
             let height = WINDOW_Y as u32 - pos_y;
             let width = 64 + TILE_SIZE.0 * rng.gen_range(0, 3);
@@ -164,19 +162,13 @@ impl Building {
             }
 
             let bound_box = Rectangle::new((last_x, pos_y), (width, height));
-
-            let mut parts = pool.take();
-            if let Some(part) = parts.as_mut() {
-                part.push(bound_box);
-            } else {
-                eprintln!("ERROR: No mem in pools!");
-            }
+            pool.push(bound_box);
 
             b.push(Building {
                 bound_box,
-                parts,
                 tiles,
             });
+
             last_x += width + 8;
             if last_x > WINDOW_X as u32 {
                 break;
@@ -240,36 +232,33 @@ fn remove_parts(circle: &Circle, parts: &mut Vec<Rectangle>) {
     }
 }
 
-fn collide_buildings(circle: Circle, buildings: &[Building]) -> bool {
-    for building in buildings.iter() {
+fn collide_buildings(circle: Circle, buildings: &[Building], parts: &[Vec<Rectangle>]) -> bool {
+    for (i, building) in buildings.iter().enumerate() {
         if circle.overlaps(&building.bound_box) {
-            if let Some(parts) = building.parts.as_ref() {
-                match parts.len() {
+                match parts[i].len() {
                     1 => return true,
                     _ => {
-                        for x in parts.iter() {
+                        for x in parts[i].iter() {
                             if circle.overlaps(x) {
                                 return true;
                             }
                         }
                     }
                 }
-            }
         }
     }
     false
 }
 
 // returns the index of the buildings affected by the shot
-fn collide_shot(circle: Circle, buildings: &[Building]) -> Vec<usize> {
+fn collide_shot(circle: Circle, buildings: &[Building], parts: &[Vec<Rectangle>]) -> Vec<usize> {
     let mut v = vec![];
     for (i, building) in buildings.iter().enumerate() {
         if circle.overlaps(&building.bound_box) {
-            if let Some(parts) = building.parts.as_ref() {
-                match parts.len() {
+                match parts[i].len() {
                     1 => v.push(i),
                     _ => {
-                        for x in parts.iter() {
+                        for x in parts[i].iter() {
                             if circle.overlaps(x) {
                                 v.push(i);
                                 break;
@@ -277,7 +266,6 @@ fn collide_shot(circle: Circle, buildings: &[Building]) -> Vec<usize> {
                         }
                     }
                 }
-            }
         }
     }
     v
@@ -315,13 +303,8 @@ fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
 }
 
 impl Game {
-    pub fn new(config: GameConfig) -> Result<Self> {
-        let mut pools = vec![];
-        for _ in 0..11 {
-            pools.push(Some(Vec::with_capacity(512)));
-        }
-
-        let round = Round::new(&mut pools);
+    pub fn new(config: GameConfig, pools: &mut [Vec<Rectangle>]) -> Result<Self> {
+        let round = Round::new(pools);
         let bot_left = if config.bot_left {
             Some(Bot::new(Side::Left, &round))
         } else {
@@ -348,7 +331,6 @@ impl Game {
             mouse_pos: Vector::ZERO,
             bot_left,
             bot_right,
-            pools,
         })
     }
 
@@ -359,18 +341,18 @@ impl Game {
         }
     }
 
-    fn collision(&self, circle: Circle) -> Collision {
-        let hits = collide_buildings(circle, &self.round.buildings);
+    fn collision(&self, circle: Circle, parts: &[Vec<Rectangle>]) -> Collision {
+        let hits = collide_buildings(circle, &self.round.buildings, parts);
         let explosion = Circle::new(circle.pos, circle.radius * 4.0);
         if hits {
-            Collision::Buildings(collide_shot(explosion, &self.round.buildings))
+            Collision::Buildings(collide_shot(explosion, &self.round.buildings, parts))
         } else if collide_field(circle.pos) {
             Collision::Sky
         } else if collide_player(circle, &self.round.gorilla_left) {
-            let terrain_damage = collide_shot(explosion, &self.round.buildings);
+            let terrain_damage = collide_shot(explosion, &self.round.buildings, parts);
             Collision::Player(Side::Left, terrain_damage)
         } else if collide_player(circle, &self.round.gorilla_right) {
-            let terrain_damage = collide_shot(explosion, &self.round.buildings);
+            let terrain_damage = collide_shot(explosion, &self.round.buildings, parts);
             Collision::Player(Side::Right, terrain_damage)
         } else {
             Collision::None
@@ -399,13 +381,10 @@ impl Game {
         self.juice = Some(0.0);
     }
 
-    fn destroy_terrain(&mut self, circle: &Circle, xs: Vec<usize>) {
+    fn destroy_terrain(&mut self, circle: &Circle, xs: Vec<usize>, parts: &mut [Vec<Rectangle>]) {
         let explosion = Circle::new(circle.pos, circle.radius * EXPLOSION_DESTROY_SCALE);
         for i in xs {
-            let building = &mut self.round.buildings[i];
-            if let Some(parts) = building.parts.as_mut() {
-                remove_parts(&explosion, parts);
-            }
+            remove_parts(&explosion, &mut parts[i]);
         }
         self.explosion_masks.push(explosion);
     }
@@ -413,7 +392,7 @@ impl Game {
     pub fn draw(
         &mut self,
         shared: &SharedAssets,
-        data: &mut SharedData,
+        data: &SharedData,
         window: &mut Window,
     ) -> Result<()> {
         if self.round.surface.is_none() {
@@ -714,15 +693,10 @@ impl Game {
                 self.explosion_state = None;
                 self.turn = next_side(self.turn);
                 if self.new_game.is_some() {
-                    for (i, building) in self.round.buildings.iter_mut().enumerate() {
-                        if building.parts.is_some() {
-                            self.pools[i] = building.parts.take();
-                            if let Some(x) = self.pools[i].as_mut() {
-                                x.clear();
-                            }
-                        }
+                    for part in data.parts.iter_mut() {
+                        part.clear()
                     }
-                    self.round = Round::new(&mut self.pools);
+                    self.round = Round::new(&mut data.parts);
                     self.explosion_masks.clear();
                     self.reset_bots();
                     self.new_game = None;
@@ -738,14 +712,14 @@ impl Game {
                 update_shot_windy(circle.pos, prev_speed, self.round.wind * WIND_PLAY_RATIO);
             circle.pos = pos;
             angle += BANANA_ANG_SPEED;
-            match self.collision(circle) {
+            match self.collision(circle, &data.parts) {
                 Collision::None => self.shot = Some((circle, speed, angle)),
                 Collision::Player(side, xs) => {
                     match side {
                         Side::Left => self.points_right += 1,
                         Side::Right => self.points_left += 1,
                     }
-                    self.destroy_terrain(&circle, xs);
+                    self.destroy_terrain(&circle, xs, &mut data.parts);
                     let gorilla = self.gorilla_from_side(side);
                     let gorilla = gorilla.pos + gorilla.size / 2;
                     self.on_explode(data, pos, Some(gorilla));
@@ -753,7 +727,7 @@ impl Game {
                 }
                 Collision::Buildings(xs) => {
                     self.update_aim(pos);
-                    self.destroy_terrain(&circle, xs);
+                    self.destroy_terrain(&circle, xs, &mut data.parts);
                     self.on_explode(data, pos, None);
                 }
                 _ => {

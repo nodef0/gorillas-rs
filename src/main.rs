@@ -26,6 +26,7 @@ pub struct SharedAssets {
 
 pub struct SharedData {
     particle_buffer: Vec<(Vector, Vector, Color)>,
+    parts: Vec<Vec<Rectangle>>,
 }
 
 pub struct GameConfig {
@@ -210,6 +211,11 @@ impl MainMenu {
 
 impl State for States {
     fn new() -> Result<States> {
+        let mut parts = vec![];
+        for _ in 0..11 {
+            parts.push(Vec::with_capacity(512));
+        }
+
         Ok(States {
             shared_assets: SharedAssets {
                 explosion: RefCell::new(Asset::new(Image::load("Explosion.png"))),
@@ -222,6 +228,7 @@ impl State for States {
             },
             shared_data: SharedData {
                 particle_buffer: Vec::with_capacity(PARTICLE_COUNT),
+                parts,
             },
             focus: Focus::Main,
             game: None,
@@ -241,13 +248,13 @@ impl State for States {
             Focus::Main => self.main_menu.draw(&self.shared_assets, window),
             Focus::Game => {
                 if let Some(game) = &mut self.game {
-                    game.draw(&self.shared_assets, &mut self.shared_data, window)?;
+                    game.draw(&self.shared_assets, &self.shared_data, window)?;
                 }
                 Ok(())
             }
             Focus::Pause => {
                 if let Some(game) = &mut self.game {
-                    game.draw(&self.shared_assets, &mut self.shared_data, window)?;
+                    game.draw(&self.shared_assets, &self.shared_data, window)?;
                 }
                 self.pause_menu.draw(&self.shared_assets, window)
             }
@@ -259,7 +266,7 @@ impl State for States {
             // main menu
             (_, Focus::Main) => {
                 if let Some(config) = self.main_menu.event(event, window) {
-                    self.game = Some(Game::new(config)?);
+                    self.game = Some(Game::new(config, &mut self.shared_data.parts)?);
                     self.focus = Focus::Game;
                 }
                 Ok(())
