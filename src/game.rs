@@ -1,5 +1,5 @@
 use crate::game_constants::*;
-use crate::{GameConfig, SharedAssets};
+use crate::{GameConfig, SharedAssets, SharedData};
 
 use quicksilver::{
     geom::{Circle, Line, Rectangle, Shape, Transform, Vector},
@@ -47,14 +47,12 @@ struct Round {
 struct Explosion {
     pos: Vector,
     frame: u32,
-    particles: Option<Vec<(Vector, Vector, Color)>>,
 }
 
 pub struct Game {
     round: Round,
     counting: bool,
     counter: i32,
-    particle_buffer: Option<Vec<(Vector, Vector, Color)>>,
     explosion_state: Option<Explosion>,
     explosion_masks: Vec<Circle>,
     shot: Option<(Circle, Vector, f32)>,
@@ -339,7 +337,6 @@ impl Game {
             round,
             counting: false,
             counter: 0i32,
-            particle_buffer: Some(Vec::with_capacity(PARTICLE_COUNT)),
             explosion_state: None,
             explosion_masks: vec![],
             shot: None,
@@ -380,9 +377,8 @@ impl Game {
         }
     }
 
-    fn on_explode(&mut self, pos: Vector, particle_pos: Option<Vector>) {
-        let particles = if let Some(pos) = particle_pos {
-            let mut buffer = self.particle_buffer.take().unwrap(); // invariant, we always have a particle buffer
+    fn on_explode(&mut self, data: &mut SharedData, pos: Vector, particle_pos: Option<Vector>) {
+        if let Some(pos) = particle_pos {
             let mut rng = rand::thread_rng();
             for _ in 0..PARTICLE_COUNT {
                 let color = Color::from_hex(PLAYER_PALETTE[rng.gen_range(0, PLAYER_PALETTE.len())]);
@@ -391,18 +387,14 @@ impl Game {
                     y: rng.gen_range(-1.0, 1.0),
                 };
                 let vel = vel.normalize() * rng.gen_range(PARTICLE_MIN_VEL, PARTICLE_MAX_VEL);
-                buffer.push((pos, vel, color));
+                data.particle_buffer.push((pos, vel, color));
             }
-            Some(buffer)
-        } else {
-            None
-        };
+        }
 
         self.shot = None;
         self.explosion_state = Some(Explosion {
             pos: pos - EXPLOSION_HALF_VEC,
             frame: 0,
-            particles,
         });
         self.juice = Some(0.0);
     }
@@ -418,7 +410,12 @@ impl Game {
         self.explosion_masks.push(explosion);
     }
 
-    pub fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
+    pub fn draw(
+        &mut self,
+        shared: &SharedAssets,
+        data: &mut SharedData,
+        window: &mut Window,
+    ) -> Result<()> {
         if self.round.surface.is_none() {
             let surface = Surface::new(800, 600)?;
             surface.render_to(window, |w| {
@@ -577,15 +574,13 @@ impl Game {
                     4.0,
                 );
                 // draw particles
-                if let Some(particles) = explosion.particles.as_ref() {
-                    for particle in particles.iter() {
-                        window.draw_ex(
-                            &Rectangle::new(particle.0, PARTICLE_SIZE),
-                            Col(particle.2),
-                            Transform::IDENTITY,
-                            5.0,
-                        );
-                    }
+                for particle in data.particle_buffer.iter() {
+                    window.draw_ex(
+                        &Rectangle::new(particle.0, PARTICLE_SIZE),
+                        Col(particle.2),
+                        Transform::IDENTITY,
+                        5.0,
+                    );
                 }
             }
             Ok(())
@@ -692,7 +687,7 @@ impl Game {
         self.shot.is_some() || self.explosion_state.is_some()
     }
 
-    pub fn update(&mut self, window: &mut Window) -> Result<()> {
+    pub fn update(&mut self, data: &mut SharedData, window: &mut Window) -> Result<()> {
         let gorilla = self.gorilla_from_side(self.turn);
         let center = gorilla.pos + (gorilla.size / 2);
 
@@ -708,20 +703,14 @@ impl Game {
         }
 
         if let Some(state) = self.explosion_state.as_mut() {
-            if let Some(particles) = state.particles.as_mut() {
-                for particle in particles.iter_mut() {
-                    let (pos, speed) = update_shot(particle.0, particle.1);
-                    particle.0 = pos;
-                    particle.1 = speed;
-                }
+            for particle in data.particle_buffer.iter_mut() {
+                let (pos, speed) = update_shot(particle.0, particle.1);
+                particle.0 = pos;
+                particle.1 = speed;
             }
 
             if state.frame / 2 == EXPLOSION_FRAMES {
-                let buffer = state.particles.take();
-                if let Some(mut buffer) = buffer {
-                    buffer.clear();
-                    self.particle_buffer = Some(buffer);
-                }
+                data.particle_buffer.clear();
                 self.explosion_state = None;
                 self.turn = next_side(self.turn);
                 if self.new_game.is_some() {
@@ -759,13 +748,13 @@ impl Game {
                     self.destroy_terrain(&circle, xs);
                     let gorilla = self.gorilla_from_side(side);
                     let gorilla = gorilla.pos + gorilla.size / 2;
-                    self.on_explode(pos, Some(gorilla));
+                    self.on_explode(data, pos, Some(gorilla));
                     self.new_game = Some(next_side(side));
                 }
                 Collision::Buildings(xs) => {
                     self.update_aim(pos);
                     self.destroy_terrain(&circle, xs);
-                    self.on_explode(pos, None);
+                    self.on_explode(data, pos, None);
                 }
                 _ => {
                     self.update_aim(pos);

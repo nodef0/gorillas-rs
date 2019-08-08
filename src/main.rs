@@ -24,6 +24,10 @@ pub struct SharedAssets {
     hoover_style: FontStyle,
 }
 
+pub struct SharedData {
+    particle_buffer: Vec<(Vector, Vector, Color)>,
+}
+
 pub struct GameConfig {
     bot_left: bool,
     bot_right: bool,
@@ -55,6 +59,7 @@ enum Focus {
 
 struct States {
     shared_assets: SharedAssets,
+    shared_data: SharedData,
     focus: Focus,
     game: Option<Game>,
     pause_menu: PauseMenu,
@@ -215,6 +220,9 @@ impl State for States {
                 default_style: FontStyle::new(64.0, Color::WHITE),
                 hoover_style: FontStyle::new(64.0, Color::RED),
             },
+            shared_data: SharedData {
+                particle_buffer: Vec::with_capacity(PARTICLE_COUNT),
+            },
             focus: Focus::Main,
             game: None,
             pause_menu: PauseMenu,
@@ -233,13 +241,13 @@ impl State for States {
             Focus::Main => self.main_menu.draw(&self.shared_assets, window),
             Focus::Game => {
                 if let Some(game) = &mut self.game {
-                    game.draw(&self.shared_assets, window)?;
+                    game.draw(&self.shared_assets, &mut self.shared_data, window)?;
                 }
                 Ok(())
             }
             Focus::Pause => {
                 if let Some(game) = &mut self.game {
-                    game.draw(&self.shared_assets, window)?;
+                    game.draw(&self.shared_assets, &mut self.shared_data, window)?;
                 }
                 self.pause_menu.draw(&self.shared_assets, window)
             }
@@ -284,7 +292,7 @@ impl State for States {
         match self.focus {
             Focus::Game => {
                 if let Some(game) = &mut self.game {
-                    game.update(window)?;
+                    game.update(&mut self.shared_data, window)?;
                 }
                 Ok(())
             }
