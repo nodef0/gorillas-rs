@@ -5,7 +5,7 @@ use quicksilver::{
     geom::{Circle, Line, Rectangle, Shape, Transform, Vector},
     graphics::{
         Background::{Col, Img},
-        Color, Surface, View,
+        Color, Image, Surface, View,
     },
     input::{ButtonState, MouseButton},
     lifecycle::{Event, Window},
@@ -42,6 +42,8 @@ struct Round {
     wind: Vector,
     rain: Vec<Vector>,
     surface: Option<Surface>,
+    score: Option<Image>,
+    render_score: bool,
 }
 
 struct Explosion {
@@ -133,6 +135,8 @@ impl Round {
             wind,
             rain,
             surface: None,
+            score: None,
+            render_score: true,
         }
     }
 }
@@ -164,10 +168,7 @@ impl Building {
             let bound_box = Rectangle::new((last_x, pos_y), (width, height));
             pool.push(bound_box);
 
-            b.push(Building {
-                bound_box,
-                tiles,
-            });
+            b.push(Building { bound_box, tiles });
 
             last_x += width + 8;
             if last_x > WINDOW_X as u32 {
@@ -235,16 +236,16 @@ fn remove_parts(circle: &Circle, parts: &mut Vec<Rectangle>) {
 fn collide_buildings(circle: Circle, buildings: &[Building], parts: &[Vec<Rectangle>]) -> bool {
     for (i, building) in buildings.iter().enumerate() {
         if circle.overlaps(&building.bound_box) {
-                match parts[i].len() {
-                    1 => return true,
-                    _ => {
-                        for x in parts[i].iter() {
-                            if circle.overlaps(x) {
-                                return true;
-                            }
+            match parts[i].len() {
+                1 => return true,
+                _ => {
+                    for x in parts[i].iter() {
+                        if circle.overlaps(x) {
+                            return true;
                         }
                     }
                 }
+            }
         }
     }
     false
@@ -255,17 +256,17 @@ fn collide_shot(circle: Circle, buildings: &[Building], parts: &[Vec<Rectangle>]
     let mut v = vec![];
     for (i, building) in buildings.iter().enumerate() {
         if circle.overlaps(&building.bound_box) {
-                match parts[i].len() {
-                    1 => v.push(i),
-                    _ => {
-                        for x in parts[i].iter() {
-                            if circle.overlaps(x) {
-                                v.push(i);
-                                break;
-                            }
+            match parts[i].len() {
+                1 => v.push(i),
+                _ => {
+                    for x in parts[i].iter() {
+                        if circle.overlaps(x) {
+                            v.push(i);
+                            break;
                         }
                     }
                 }
+            }
         }
     }
     v
@@ -395,6 +396,19 @@ impl Game {
         data: &SharedData,
         window: &mut Window,
     ) -> Result<()> {
+        if self.round.render_score {
+            shared.font.borrow_mut().execute(|f| {
+                if let Ok(text) = f.render(
+                    &format!("{:02}-{:02}", self.points_left, self.points_right),
+                    &shared.default_style,
+                ) {
+                    self.round.render_score = false;
+                    self.round.score = Some(text);
+                }
+                Ok(())
+            })?;
+        }
+
         if self.round.surface.is_none() {
             let surface = Surface::new(800, 600)?;
             surface.render_to(window, |w| {
@@ -583,22 +597,15 @@ impl Game {
                 6.0,
             );
         }
+        if let Some(text) = self.round.score.as_ref() {
+            window.draw_ex(
+                &text.area().with_center((WINDOW_X / 2.0, 100.0)),
+                Img(text),
+                Transform::IDENTITY,
+                4.0,
+            );
+        }
 
-        //draw score
-        shared.font.borrow_mut().execute(|f| {
-            if let Ok(ref text) = f.render(
-                &format!("{:02}-{:02}", self.points_left, self.points_right),
-                &shared.default_style,
-            ) {
-                window.draw_ex(
-                    &text.area().with_center((WINDOW_X / 2.0, 100.0)),
-                    Img(text),
-                    Transform::IDENTITY,
-                    4.0,
-                );
-            }
-            Ok(())
-        })?;
         Ok(())
     }
 
@@ -724,6 +731,7 @@ impl Game {
                     let gorilla = gorilla.pos + gorilla.size / 2;
                     self.on_explode(data, pos, Some(gorilla));
                     self.new_game = Some(next_side(side));
+                    self.round.render_score = true;
                 }
                 Collision::Buildings(xs) => {
                     self.update_aim(pos);
