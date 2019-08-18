@@ -1,6 +1,8 @@
 use crate::game_constants::*;
 use crate::{GameConfig, SharedAssets, SharedData};
 
+use crate::ws::ClientImpl;
+
 use quicksilver::{
     geom::{Circle, Line, Rectangle, Shape, Transform, Vector},
     graphics::{
@@ -14,6 +16,10 @@ use quicksilver::{
 
 use rand::prelude::*;
 use std::cmp;
+use std::sync::mpsc::{channel, Receiver};
+use crate::ws::{WireState, WireStatePacket};
+use std::io::prelude::*;
+use flate2::bufread::DeflateDecoder;
 
 #[derive(Copy, Clone)]
 enum Side {
@@ -66,6 +72,8 @@ pub struct Game {
     mouse_pos: Vector,
     bot_right: Option<Bot>,
     bot_left: Option<Bot>,
+    rx: Receiver<Vec<u8>>,
+    client: Option<ClientImpl>,
 }
 
 struct Building {
@@ -305,6 +313,7 @@ fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
 
 impl Game {
     pub fn new(config: GameConfig, pools: &mut [Vec<Rectangle>]) -> Result<Self> {
+        let (tx, rx)= channel();
         let round = Round::new(pools);
         let bot_left = if config.bot_left {
             Some(Bot::new(Side::Left, &round))
@@ -332,6 +341,8 @@ impl Game {
             mouse_pos: Vector::ZERO,
             bot_left,
             bot_right,
+            rx,
+            client: ClientImpl::new("ws://localhost:2794", tx).ok(),
         })
     }
 
@@ -624,6 +635,9 @@ impl Game {
                     dir * 0.006 * self.counter as f32,
                     0.0,
                 ));
+                if let Some(client) = self.client.as_ref() {
+                    client.send_text(&format!("{} {} {}", dir.x, dir.y, self.counter));
+                }
             }
             _ => (),
         }
@@ -674,6 +688,23 @@ impl Game {
     }
 
     pub fn update(&mut self, data: &mut SharedData, window: &mut Window) -> Result<()> {
+        let mut last_state = None;
+        while let Ok(s) = self.rx.try_recv() {
+            last_state = Some(s);
+        };
+        last_state.map(|m| {
+            let mut data = vec![];
+            let packet: WireStatePacket = bincode::deserialize(&m).unwrap();
+            let mut deflater = DeflateDecoder::new(&packet.data[..]);
+            if deflater.read_to_end(&mut data).is_ok() {
+                let state: WireState = bincode::deserialize(&data).unwrap();
+                self.client.as_ref().map(|c| {
+                    c.on_console(&state);
+                    c.send_ack(packet.seq.1)
+                });
+            }
+        });
+
         let gorilla = self.gorilla_from_side(self.turn);
         let center = gorilla.pos + (gorilla.size / 2);
 

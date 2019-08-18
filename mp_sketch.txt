@@ -1,0 +1,37 @@
+server:
+  [ ] sets up a match (two sockets wating) 
+  [ ] server should create the round data, send to each client, wait for ACK
+  [ ] listens for input from the sockets (in case of disconnects) 
+  [ ] runs the update
+  [ ] sends delta compressed update sequences 
+        for ((i, player), last_state) in 
+            players
+                .iter()
+                .enumerate()
+                .zip(player_ack.iter()) {
+            calc_delta = delta_between(state, last_state)
+            player.send(calc_delta);
+        }
+        
+        // delta compression
+        -> game state
+        -> plus enemy mouse dir | charge
+
+        the delta compression scheme could be modelled like an Option<T> which represents if the 
+        game state item changes in the particular update
+
+        Option<GameStateOption>
+
+        struct GameStateOption {
+            round: Option<RoundOption>,
+            
+        };
+
+
+client:
+  [ ] waits for match
+  [x] send input events to server
+  [ ] client should poll the socket for delta updates, then ACK the last recv frame
+  [ ] ESC is the only key available anytime, others depend on the server giving the turn to the player
+
+
