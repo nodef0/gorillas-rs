@@ -1,9 +1,14 @@
 mod game;
+mod game_common;
 mod game_constants;
+mod game_net;
+mod physics;
 mod ws;
 
 use crate::game::*;
 use crate::game_constants::*;
+use crate::game_net::GameNet;
+use crate::ws::ClientImpl;
 
 use quicksilver::{
     geom::{Rectangle, Shape, Transform, Vector},
@@ -14,6 +19,7 @@ use quicksilver::{
 };
 
 use std::cell::RefCell;
+use std::sync::mpsc::channel;
 
 pub struct SharedAssets {
     player_tiles: RefCell<Asset<Image>>,
@@ -66,11 +72,18 @@ enum Focus {
     Pause,
 }
 
+enum GameType {
+    None,
+    Local(Game),
+    Net(GameNet),
+}
+
 struct States {
     shared_assets: SharedAssets,
     shared_data: SharedData,
     focus: Focus,
-    game: Option<Game>,
+    game: GameType,
+    client: Option<ClientImpl>,
     pause_menu: PauseMenu,
     main_menu: MainMenu,
 }
@@ -241,7 +254,8 @@ impl State for States {
                 parts,
             },
             focus: Focus::Main,
-            game: None,
+            game: GameType::None,
+            client: None,
             pause_menu: PauseMenu,
             main_menu: MainMenu {
                 config: GameConfig {
@@ -259,14 +273,26 @@ impl State for States {
         match self.focus {
             Focus::Main => self.main_menu.draw(&self.shared_assets, window),
             Focus::Game => {
-                if let Some(game) = &mut self.game {
-                    game.draw(&self.shared_assets, &self.shared_data, window)?;
+                match &mut self.game {
+                    GameType::Net(game) => {
+                        game.draw(&self.shared_assets, &self.shared_data, window)?;
+                    }
+                    GameType::Local(game) => {
+                        game.draw(&self.shared_assets, &self.shared_data, window)?;
+                    }
+                    GameType::None => (),
                 }
                 Ok(())
             }
             Focus::Pause => {
-                if let Some(game) = &mut self.game {
-                    game.draw(&self.shared_assets, &self.shared_data, window)?;
+                match &mut self.game {
+                    GameType::Net(game) => {
+                        game.draw(&self.shared_assets, &self.shared_data, window)?;
+                    }
+                    GameType::Local(game) => {
+                        game.draw(&self.shared_assets, &self.shared_data, window)?;
+                    }
+                    GameType::None => (),
                 }
                 self.pause_menu.draw(&self.shared_assets, window)
             }
@@ -278,7 +304,22 @@ impl State for States {
             // main menu
             (_, Focus::Main) => {
                 if let Some(config) = self.main_menu.event(event, window) {
-                    self.game = Some(Game::new(config, &mut self.shared_data.parts)?);
+                    match (config.left, config.right) {
+                        (Player::Net, _) => {
+                            let (tx, rx) = channel();
+                            self.client = ClientImpl::new("ws://localhost:2794", tx).ok();
+                            self.game = GameType::Net(GameNet::new(config, rx));
+                        }
+                        (_, Player::Net) => {
+                            let (tx, rx) = channel();
+                            self.client = ClientImpl::new("ws://localhost:2794", tx).ok();
+                            self.game = GameType::Net(GameNet::new(config, rx));
+                        }
+                        _ => {
+                            self.game =
+                                GameType::Local(Game::new(config, &mut self.shared_data.parts)?)
+                        }
+                    }
                     self.focus = Focus::Game;
                 }
                 Ok(())
@@ -298,8 +339,16 @@ impl State for States {
                 Ok(())
             }
             (_, Focus::Game) => {
-                if let Some(game) = &mut self.game {
-                    game.event(event);
+                match &mut self.game {
+                    GameType::Net(game) => {
+                        if let Some(client) = &self.client {
+                            game.event(event, client);
+                        }
+                    }
+                    GameType::Local(game) => {
+                        game.event(event);
+                    }
+                    GameType::None => {}
                 }
                 Ok(())
             }
@@ -310,8 +359,16 @@ impl State for States {
     fn update(&mut self, window: &mut Window) -> Result<()> {
         match self.focus {
             Focus::Game => {
-                if let Some(game) = &mut self.game {
-                    game.update(&mut self.shared_data, window)?;
+                match &mut self.game {
+                    GameType::Net(game) => {
+                        if let Some(client) = &self.client {
+                            game.update(client, &mut self.shared_data, window);
+                        }
+                    }
+                    GameType::Local(game) => {
+                        game.update(&mut self.shared_data, window)?;
+                    }
+                    GameType::None => {}
                 }
                 Ok(())
             }

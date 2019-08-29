@@ -1,7 +1,7 @@
+use crate::game_common::*;
 use crate::game_constants::*;
+use crate::physics::*;
 use crate::{GameConfig, Player, SharedAssets, SharedData};
-
-use crate::ws::ClientImpl;
 
 use quicksilver::{
     geom::{Circle, Line, Rectangle, Shape, Transform, Vector},
@@ -14,31 +14,14 @@ use quicksilver::{
     Result,
 };
 
-use crate::ws::{WireState, WireStatePacket};
-use flate2::bufread::DeflateDecoder;
 use rand::prelude::*;
-use std::io::prelude::*;
-use std::sync::mpsc::{channel, Receiver};
-use std::{cmp, iter};
-
-#[derive(Copy, Clone)]
-enum Side {
-    Left,
-    Right,
-}
+use std::cmp;
 
 struct Bot {
     counter: i32,
     dir: Vector,
     pos: Vector,
     target: Vector,
-}
-
-enum Collision {
-    None,
-    Sky,
-    Rectangles(Vec<usize>),
-    Player(Side, Vec<usize>),
 }
 
 struct Round {
@@ -50,11 +33,6 @@ struct Round {
     surface: Option<Surface>,
     score: Option<Image>,
     render_score: bool,
-}
-
-struct Explosion {
-    pos: Vector,
-    frame: u32,
 }
 
 pub struct Game {
@@ -72,10 +50,6 @@ pub struct Game {
     mouse_pos: Vector,
     bot_right: Option<Bot>,
     bot_left: Option<Bot>,
-    rx: Receiver<Vec<u8>>,
-    client: Option<ClientImpl>,
-    delta_base: Option<(u32, Vec<u8>)>,
-    delta_last: Option<(u32, Option<Vec<u8>>)>,
 }
 
 impl Bot {
@@ -165,29 +139,6 @@ fn buildings(pools: &mut [Vec<Rectangle>]) -> Vec<Rectangle> {
     b
 }
 
-fn from_delta(delta: &[u8], base: &[u8]) -> Vec<u8> {
-    base.iter()
-        .chain(iter::repeat(&0x00))
-        .zip(delta.iter().chain(iter::repeat(&0x00)))
-        .map(|(a, b)| a.wrapping_add(*b))
-        .take(cmp::max(delta.len(), base.len()))
-        .collect()
-}
-
-fn update_shot(pos: Vector, speed: Vector) -> (Vector, Vector) {
-    (
-        Vector::new(pos.x + DELTAT_MS * speed.x, pos.y + DELTAT_MS * speed.y),
-        Vector::new(speed.x, speed.y + GRAVITY),
-    )
-}
-
-fn update_shot_windy(pos: Vector, speed: Vector, wind: Vector) -> (Vector, Vector) {
-    (
-        Vector::new(pos.x + DELTAT_MS * speed.x, pos.y + DELTAT_MS * speed.y),
-        Vector::new(wind.x + speed.x, wind.y + speed.y + GRAVITY),
-    )
-}
-
 fn next_side(side: Side) -> Side {
     match side {
         Side::Left => Side::Right,
@@ -212,95 +163,8 @@ fn place_gorilla(side: Side, buildings: &[Rectangle]) -> Rectangle {
     )
 }
 
-fn collide_field(pos: Vector) -> bool {
-    pos.x > WINDOW_X || pos.y > WINDOW_Y || pos.x < 0.0
-}
-
-fn remove_parts(circle: &Circle, parts: &mut Vec<Rectangle>) {
-    let overlap = parts
-        .iter()
-        .cloned()
-        .filter(|x| circle.overlaps(x))
-        .collect::<Vec<_>>();
-    parts.retain(|x| !circle.overlaps(x));
-    for i in overlap.iter() {
-        parts.extend(create_parts(&circle, i));
-    }
-}
-
-fn collide_buildings(circle: Circle, buildings: &[Rectangle], parts: &[Vec<Rectangle>]) -> bool {
-    for (i, building) in buildings.iter().enumerate() {
-        if circle.overlaps(building) {
-            match parts[i].len() {
-                1 => return true,
-                _ => {
-                    for x in parts[i].iter() {
-                        if circle.overlaps(x) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-// returns the index of the buildings affected by the shot
-fn collide_shot(circle: Circle, buildings: &[Rectangle], parts: &[Vec<Rectangle>]) -> Vec<usize> {
-    let mut v = vec![];
-    for (i, building) in buildings.iter().enumerate() {
-        if circle.overlaps(building) {
-            match parts[i].len() {
-                1 => v.push(i),
-                _ => {
-                    for x in parts[i].iter() {
-                        if circle.overlaps(x) {
-                            v.push(i);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    v
-}
-
-fn collide_player(circle: Circle, player: &Rectangle) -> bool {
-    circle.overlaps(player)
-}
-
-fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
-    let size = source.size / 2.0;
-    let rects = [
-        Rectangle::new((source.pos.x, source.pos.y), size),
-        Rectangle::new((source.pos.x + size.x, source.pos.y), size),
-        Rectangle::new((source.pos.x, source.pos.y + size.y), size),
-        Rectangle::new((source.pos.x + size.x, source.pos.y + size.y), size),
-    ];
-    if source.size.x < PARTS_GRID_MIN && source.size.y < PARTS_GRID_MIN {
-        rects
-            .iter()
-            .cloned()
-            .filter(|x| !circle.overlaps(x))
-            .collect::<Vec<_>>()
-    } else {
-        let mut v = vec![];
-        for r in rects.iter() {
-            if circle.overlaps(r) {
-                v.extend(create_parts(circle, r));
-            } else {
-                v.push(*r);
-            }
-        }
-        v
-    }
-}
-
 impl Game {
     pub fn new(config: GameConfig, pools: &mut [Vec<Rectangle>]) -> Result<Self> {
-        let (tx, rx) = channel();
         let round = Round::new(pools);
         let into_bot = |player, side| match player {
             Player::Bot => Some(Bot::new(side, &round)),
@@ -324,10 +188,6 @@ impl Game {
             mouse_pos: Vector::ZERO,
             bot_left,
             bot_right,
-            rx,
-            client: ClientImpl::new("ws://localhost:2794", tx).ok(),
-            delta_base: None,
-            delta_last: None,
         })
     }
 
@@ -335,24 +195,6 @@ impl Game {
         match side {
             Side::Left => &self.round.gorilla_left,
             Side::Right => &self.round.gorilla_right,
-        }
-    }
-
-    fn collision(&self, circle: Circle, parts: &[Vec<Rectangle>]) -> Collision {
-        let hits = collide_buildings(circle, &self.round.buildings, parts);
-        let explosion = Circle::new(circle.pos, circle.radius * 4.0);
-        if hits {
-            Collision::Rectangles(collide_shot(explosion, &self.round.buildings, parts))
-        } else if collide_field(circle.pos) {
-            Collision::Sky
-        } else if collide_player(circle, &self.round.gorilla_left) {
-            let terrain_damage = collide_shot(explosion, &self.round.buildings, parts);
-            Collision::Player(Side::Left, terrain_damage)
-        } else if collide_player(circle, &self.round.gorilla_right) {
-            let terrain_damage = collide_shot(explosion, &self.round.buildings, parts);
-            Collision::Player(Side::Right, terrain_damage)
-        } else {
-            Collision::None
         }
     }
 
@@ -376,14 +218,6 @@ impl Game {
             frame: 0,
         });
         self.juice = Some(0.0);
-    }
-
-    fn destroy_terrain(&mut self, circle: &Circle, xs: Vec<usize>, parts: &mut [Vec<Rectangle>]) {
-        let explosion = Circle::new(circle.pos, circle.radius * EXPLOSION_DESTROY_SCALE);
-        for i in xs {
-            remove_parts(&explosion, &mut parts[i]);
-        }
-        self.explosion_masks.push(explosion);
     }
 
     pub fn draw(
@@ -640,9 +474,6 @@ impl Game {
                     dir * 0.006 * self.counter as f32,
                     0.0,
                 ));
-                if let Some(client) = self.client.as_ref() {
-                    client.send_text(&format!("{} {} {}", dir.x, dir.y, self.counter));
-                }
             }
             _ => (),
         }
@@ -692,72 +523,7 @@ impl Game {
         self.shot.is_some() || self.explosion_state.is_some()
     }
 
-    fn update_network(&mut self) -> Option<WireState> {
-        let mut last_state = None;
-        let mut packet_data = vec![];
-        let mut new_base = false;
-        while let Ok(s) = self.rx.try_recv() {
-            if !new_base {
-                let packet: WireStatePacket = bincode::deserialize(&s).unwrap();
-                if let Some(acked) = packet.seq.0 {
-                    if let (None, Some((last_base, last_packet))) =
-                        (self.delta_base.as_ref(), self.delta_last.as_mut())
-                    {
-                        // delta_base: None => Some
-                        if acked == *last_base {
-                            if let Some(new_base) = last_packet.take() {
-                                self.delta_base = Some((acked, new_base));
-                            }
-                            self.delta_last = None;
-                            last_state = Some(s);
-                            new_base = true;
-                            continue;
-                        }
-                    }
-                    if let (Some((_, base_data)), Some((last_base, Some(last_data)))) =
-                        (self.delta_base.as_ref(), self.delta_last.as_ref())
-                    {
-                        // delta base: Some => Some
-                        if acked == *last_base {
-                            self.delta_base = Some((acked, from_delta(&last_data, &base_data)));
-                            self.delta_last = None;
-                            last_state = Some(s);
-                            new_base = true;
-                            continue;
-                        }
-                    }
-                }
-            }
-            last_state = Some(s);
-        }
-        let m = last_state?;
-        let packet: WireStatePacket = bincode::deserialize(&m).unwrap();
-        DeflateDecoder::new(&packet.data[..])
-            .read_to_end(&mut packet_data)
-            .ok()?;
-
-        let client_ack = packet.seq.1;
-
-        let state = match self.delta_base.as_ref() {
-            Some((_, base)) => Some(from_delta(&packet_data, &base)),
-            None => Some(packet_data.clone()),
-        }?;
-
-        if self.delta_last.is_none() {
-            self.delta_last = Some((client_ack, Some(packet_data)));
-            self.client.as_ref()?.send_ack(client_ack);
-        }
-
-        bincode::deserialize(&state[..]).ok()
-    }
-
     pub fn update(&mut self, data: &mut SharedData, window: &mut Window) -> Result<()> {
-        if let Some(s) = self.update_network() {
-            if let Some(c) = self.client.as_ref() {
-                c.on_console(&format!("{:?}", s));
-            }
-        };
-
         let gorilla = self.gorilla_from_side(self.turn);
         let center = gorilla.pos + (gorilla.size / 2);
 
@@ -803,23 +569,28 @@ impl Game {
                 update_shot_windy(circle.pos, prev_speed, self.round.wind * WIND_PLAY_RATIO);
             circle.pos = pos;
             angle += BANANA_ANG_SPEED;
-            match self.collision(circle, &data.parts) {
+            let left = &self.round.gorilla_left;
+            let right = &self.round.gorilla_right;
+            let buildings = &self.round.buildings;
+            match collision(circle, left, right, buildings, &data.parts) {
                 Collision::None => self.shot = Some((circle, speed, angle)),
                 Collision::Player(side, xs) => {
                     match side {
                         Side::Left => self.points_right += 1,
                         Side::Right => self.points_left += 1,
                     }
-                    self.destroy_terrain(&circle, xs, &mut data.parts);
+                    let explosion = destroy_terrain(&circle, xs, &mut data.parts);
+                    self.explosion_masks.push(explosion);
                     let gorilla = self.gorilla_from_side(side);
                     let gorilla = gorilla.pos + gorilla.size / 2;
                     self.on_explode(data, pos, Some(gorilla));
                     self.new_game = Some(next_side(side));
                     self.round.render_score = true;
                 }
-                Collision::Rectangles(xs) => {
+                Collision::Buildings(xs) => {
                     self.update_aim(pos);
-                    self.destroy_terrain(&circle, xs, &mut data.parts);
+                    let explosion = destroy_terrain(&circle, xs, &mut data.parts);
+                    self.explosion_masks.push(explosion);
                     self.on_explode(data, pos, None);
                 }
                 _ => {

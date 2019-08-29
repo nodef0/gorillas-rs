@@ -1,3 +1,4 @@
+use quicksilver::geom::Vector;
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_arch = "wasm32")]
@@ -18,10 +19,10 @@ pub enum SocketError {
     // Write,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct WireState {
-    s: String,
-}
+// #[derive(Deserialize, Debug)]
+// pub struct WireState {
+//     s: String,
+// }
 
 #[derive(Deserialize, Debug)]
 pub struct WireStatePacket {
@@ -32,41 +33,12 @@ pub struct WireStatePacket {
 #[derive(Serialize, Debug)]
 pub enum WireClientEvent {
     Ack(u32),
+    Game(GameEvents),
 }
 
-// Things that need to be sent over the wire
-//
-// pub struct SharedData {
-//     parts: Vec<Vec<Rectangle>>,
-// }
-//
-// struct Building {
-//     bound_box: Rectangle,
-//     tiles: Vec<usize>, // indicies into the tilemap
-// }
-//
-// struct Explosion {
-//     pos: Vector,
-//     frame: u32,
-// }
-//
-// struct RoundState {
-//     buildings: Vec<Building>,
-//     gorilla_left: Rectangle,
-//     gorilla_right: Rectangle,
-//     wind: Vector,
-// }
-//
-// pub struct GameState {
-//     round: Round,
-//     counting: bool,
-//     counter: i32,
-//     explosion_pos: Option<Explosion>,
-//     explosion_masks: Vec<Circle>,
-//     shot: Option<(Circle, Vector, f32)>,
-//     turn: Side,
-//     points_left: u32,
-//     points_right: u32,
-//     new_game: Option<Side>,
-//     mouse_pos: Vector,
-// }
+#[derive(Serialize, Debug)]
+pub enum GameEvents {
+    MousePressed,
+    MouseReleased,
+    MousePos(Vector),
+}

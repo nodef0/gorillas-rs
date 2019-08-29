@@ -1,4 +1,4 @@
-use crate::ws::{SocketError, WireClientEvent};
+use crate::ws::{GameEvents, SocketError, WireClientEvent};
 use stdweb::console;
 use stdweb::web::{
     event::{IMessageEvent, SocketMessageData, SocketMessageEvent},
@@ -39,13 +39,6 @@ impl Client {
         }
     }
 
-    pub fn send_text(&self, text: &str) {
-        if self.socket.send_text(text).is_err() {
-            let err = format!("Error sending {}", text);
-            console!(log, err)
-        }
-    }
-
     pub fn on_console(&self, s: &str) {
         console!(log, String::from(s));
     }
@@ -55,6 +48,15 @@ impl Client {
         let bytes = bincode::serialize(&event).unwrap();
         if self.socket.send_bytes(&bytes[..]).is_err() {
             let err = format!("Error acking {}", seq);
+            console!(log, err)
+        }
+    }
+
+    pub fn send_game_event(&self, event: GameEvents) {
+        let event = WireClientEvent::Game(event);
+        let bytes = bincode::serialize(&event).unwrap();
+        if self.socket.send_bytes(&bytes[..]).is_err() {
+            let err = format!("Error sending shot");
             console!(log, err)
         }
     }
