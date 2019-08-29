@@ -14,12 +14,12 @@ use quicksilver::{
     Result,
 };
 
-use rand::prelude::*;
-use std::cmp;
-use std::sync::mpsc::{channel, Receiver};
 use crate::ws::{WireState, WireStatePacket};
-use std::io::prelude::*;
 use flate2::bufread::DeflateDecoder;
+use rand::prelude::*;
+use std::io::prelude::*;
+use std::sync::mpsc::{channel, Receiver};
+use std::{cmp, iter};
 
 #[derive(Copy, Clone)]
 enum Side {
@@ -74,6 +74,8 @@ pub struct Game {
     bot_left: Option<Bot>,
     rx: Receiver<Vec<u8>>,
     client: Option<ClientImpl>,
+    delta_base: Option<(u32, Vec<u8>)>,
+    delta_last: Option<(u32, Option<Vec<u8>>)>,
 }
 
 struct Building {
@@ -185,6 +187,15 @@ impl Building {
         }
         b
     }
+}
+
+fn from_delta(delta: &[u8], base: &[u8]) -> Vec<u8> {
+    base.iter()
+        .chain(iter::repeat(&0x00))
+        .zip(delta.iter().chain(iter::repeat(&0x00)))
+        .map(|(a, b)| a.wrapping_add(*b))
+        .take(cmp::max(delta.len(), base.len()))
+        .collect()
 }
 
 fn update_shot(pos: Vector, speed: Vector) -> (Vector, Vector) {
@@ -313,7 +324,7 @@ fn create_parts(circle: &Circle, source: &Rectangle) -> Vec<Rectangle> {
 
 impl Game {
     pub fn new(config: GameConfig, pools: &mut [Vec<Rectangle>]) -> Result<Self> {
-        let (tx, rx)= channel();
+        let (tx, rx) = channel();
         let round = Round::new(pools);
         let bot_left = if config.bot_left {
             Some(Bot::new(Side::Left, &round))
@@ -343,6 +354,8 @@ impl Game {
             bot_right,
             rx,
             client: ClientImpl::new("ws://localhost:2794", tx).ok(),
+            delta_base: None,
+            delta_last: None,
         })
     }
 
@@ -687,22 +700,67 @@ impl Game {
         self.shot.is_some() || self.explosion_state.is_some()
     }
 
-    pub fn update(&mut self, data: &mut SharedData, window: &mut Window) -> Result<()> {
+
+    fn update_network(&mut self) -> Option<WireState> {
         let mut last_state = None;
+        let mut packet_data = vec![];
+        let mut new_base = false;
         while let Ok(s) = self.rx.try_recv() {
-            last_state = Some(s);
-        };
-        last_state.map(|m| {
-            let mut data = vec![];
-            let packet: WireStatePacket = bincode::deserialize(&m).unwrap();
-            let mut deflater = DeflateDecoder::new(&packet.data[..]);
-            if deflater.read_to_end(&mut data).is_ok() {
-                let state: WireState = bincode::deserialize(&data).unwrap();
-                self.client.as_ref().map(|c| {
-                    c.on_console(&state);
-                    c.send_ack(packet.seq.1)
-                });
+            if !new_base {
+                let packet: WireStatePacket = bincode::deserialize(&s).unwrap();
+                if let Some(acked) = packet.seq.0 {
+                    if let (None, Some((last_base, last_packet))) =
+                        (self.delta_base.as_ref(), self.delta_last.as_mut())
+                    {
+                        // delta_base: None => Some
+                        if acked == *last_base {
+                            if let Some(new_base) = last_packet.take() {
+                                self.delta_base = Some((acked, new_base));
+                            }
+                            self.delta_last = None;
+                            last_state = Some(s);
+                            new_base = true;
+                            continue;
+                        }
+                    }
+                    if let (Some((_, base_data)), Some((last_base, Some(last_data)))) =
+                        (self.delta_base.as_ref(), self.delta_last.as_ref())
+                    {
+                        // delta base: Some => Some
+                        if acked == *last_base {
+                            self.delta_base = Some((acked, from_delta(&last_data, &base_data)));
+                            self.delta_last = None;
+                            last_state = Some(s);
+                            new_base = true;
+                            continue;
+                        }
+                    }
+                }
             }
+            last_state = Some(s);
+        }
+        let m = last_state?; 
+        let packet: WireStatePacket = bincode::deserialize(&m).unwrap();
+        DeflateDecoder::new(&packet.data[..]).read_to_end(&mut packet_data).ok()?; 
+
+        let client_ack = packet.seq.1;
+
+        let state = match self.delta_base.as_ref() {
+            Some((_, base)) => Some(from_delta(&packet_data, &base)),
+            None => Some(packet_data.clone()),
+        }?;
+
+        if self.delta_last.is_none() {
+            self.delta_last = Some((client_ack, Some(packet_data)));
+            self.client.as_ref()?.send_ack(client_ack);
+        }
+
+        bincode::deserialize(&state[..]).ok()
+    }
+
+    pub fn update(&mut self, data: &mut SharedData, window: &mut Window) -> Result<()> {
+        self.update_network().map(|s| {
+            self.client.as_ref().map(|c| c.on_console(&format!("{:?}", s)));
         });
 
         let gorilla = self.gorilla_from_side(self.turn);

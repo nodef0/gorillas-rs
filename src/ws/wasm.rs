@@ -1,6 +1,9 @@
+use crate::ws::{SocketError, WireClientEvent};
 use stdweb::console;
-use stdweb::web::{WebSocket, SocketBinaryType, event::{SocketMessageEvent, SocketMessageData, IMessageEvent}, IEventTarget};
-use crate::ws::{WireState, WireClientEvent, SocketError};
+use stdweb::web::{
+    event::{IMessageEvent, SocketMessageData, SocketMessageEvent},
+    IEventTarget, SocketBinaryType, WebSocket,
+};
 
 use std::sync::mpsc::Sender;
 
@@ -11,23 +14,22 @@ pub struct Client {
 impl Client {
     pub fn new(url: &str, tx: Sender<Vec<u8>>) -> Result<Self, SocketError> {
         match WebSocket::new_with_protocols(url, &[&"rust-websocket"]) {
-            Ok(socket) =>{
+            Ok(socket) => {
                 socket.set_binary_type(SocketBinaryType::ArrayBuffer);
-                socket
-                    .add_event_listener(move |event: SocketMessageEvent| {
-                        match event.data() {
-                            SocketMessageData::Text(msg) => { console!(log, msg); },
-                            SocketMessageData::Blob(_) => { console!(log, "Blob"); },
-                            SocketMessageData::ArrayBuffer(msg) => { 
-                                if let Err(_) = tx.send(msg.into()) {
-                                    console!(log, "Channel Error");
-                                }
-                            }
+                socket.add_event_listener(move |event: SocketMessageEvent| match event.data() {
+                    SocketMessageData::Text(msg) => {
+                        console!(log, msg);
+                    }
+                    SocketMessageData::Blob(_) => {
+                        console!(log, "Blob");
+                    }
+                    SocketMessageData::ArrayBuffer(msg) => {
+                        if let Err(_) = tx.send(msg.into()) {
+                            console!(log, "Channel Error");
                         }
-                    });
-                Ok(Client {
-                    socket,
-                })
+                    }
+                });
+                Ok(Client { socket })
             }
             Err(error) => {
                 let err = format!("Error creating socket {:?}", error);
@@ -43,9 +45,9 @@ impl Client {
             console!(log, err)
         }
     }
-    
-    pub fn on_console(&self, state: &WireState) {
-        console!(log, format!("{:?}", state));
+
+    pub fn on_console(&self, s: &str) {
+        console!(log, String::from(s));
     }
 
     pub fn send_ack(&self, seq: u32) {

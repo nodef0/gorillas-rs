@@ -5,7 +5,6 @@ mod ws;
 use crate::game::*;
 use crate::game_constants::*;
 
-
 use quicksilver::{
     geom::{Rectangle, Shape, Transform, Vector},
     graphics::{Background::Img, Color, Font, FontStyle, Image},
