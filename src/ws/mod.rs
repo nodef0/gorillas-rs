@@ -44,19 +44,19 @@ pub enum WireClientEvent {
 //     bound_box: Rectangle,
 //     tiles: Vec<usize>, // indicies into the tilemap
 // }
-// 
+//
 // struct Explosion {
 //     pos: Vector,
 //     frame: u32,
 // }
-// 
+//
 // struct RoundState {
 //     buildings: Vec<Building>,
 //     gorilla_left: Rectangle,
 //     gorilla_right: Rectangle,
 //     wind: Vector,
 // }
-// 
+//
 // pub struct GameState {
 //     round: Round,
 //     counting: bool,

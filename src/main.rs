@@ -30,9 +30,17 @@ pub struct SharedData {
     parts: Vec<Vec<Rectangle>>,
 }
 
+#[derive(Copy, Clone)]
+pub enum Player {
+    Human,
+    Bot,
+    Net,
+}
+
+#[derive(Copy, Clone)]
 pub struct GameConfig {
-    bot_left: bool,
-    bot_right: bool,
+    left: Player,
+    right: Player,
 }
 
 struct PauseMenu;
@@ -47,8 +55,7 @@ enum Hoover {
 
 struct MainMenu {
     dirty: bool,
-    bot_right: bool,
-    bot_left: bool,
+    config: GameConfig,
     hoover: Hoover,
     areas: Vec<(Rectangle, Hoover)>,
 }
@@ -86,6 +93,16 @@ impl PauseMenu {
     }
 }
 
+impl Player {
+    fn next(self) -> Player {
+        match self {
+            Player::Human => Player::Bot,
+            Player::Bot => Player::Net,
+            Player::Net => Player::Human,
+        }
+    }
+}
+
 impl MainMenu {
     fn draw(&mut self, shared: &SharedAssets, window: &mut Window) -> Result<()> {
         window.clear(Color::BLACK)?;
@@ -101,12 +118,10 @@ impl MainMenu {
                 }
             };
 
-            let select = |bot| {
-                if bot {
-                    "Gorilla"
-                } else {
-                    "Human"
-                }
+            let select = |player| match player {
+                Player::Human => "Human",
+                Player::Bot => "Gorilla",
+                Player::Net => "Jungle",
             };
 
             let (left, right, play) = match self.hoover {
@@ -139,12 +154,12 @@ impl MainMenu {
             );
 
             let area_left = draw_at_center(
-                select(self.bot_left),
+                select(self.config.left),
                 (WINDOW_X / 4.0, WINDOW_Y / 2.0),
                 left,
             );
             let area_right = draw_at_center(
-                select(self.bot_right),
+                select(self.config.right),
                 (WINDOW_X * 3.0 / 4.0, WINDOW_Y / 2.0),
                 right,
             );
@@ -179,10 +194,7 @@ impl MainMenu {
 
     fn event(&mut self, event: &Event, _window: &mut Window) -> Option<GameConfig> {
         match event {
-            Event::Key(Key::Return, ButtonState::Pressed) => Some(GameConfig {
-                bot_left: self.bot_left,
-                bot_right: self.bot_right,
-            }),
+            Event::Key(Key::Return, ButtonState::Pressed) => Some(self.config),
             Event::MouseMoved(pos) => {
                 self.event_hoover(*pos);
                 None
@@ -191,17 +203,14 @@ impl MainMenu {
                 self.dirty = true;
                 match self.hoover {
                     Hoover::Left => {
-                        self.bot_left = !self.bot_left;
+                        self.config.left = self.config.left.next();
                         None
                     }
                     Hoover::Right => {
-                        self.bot_right = !self.bot_right;
+                        self.config.right = self.config.right.next();
                         None
                     }
-                    Hoover::Play => Some(GameConfig {
-                        bot_left: self.bot_left,
-                        bot_right: self.bot_right,
-                    }),
+                    Hoover::Play => Some(self.config),
                     _ => None,
                 }
             }
@@ -235,8 +244,10 @@ impl State for States {
             game: None,
             pause_menu: PauseMenu,
             main_menu: MainMenu {
-                bot_left: false,
-                bot_right: false,
+                config: GameConfig {
+                    left: Player::Human,
+                    right: Player::Human,
+                },
                 dirty: true,
                 hoover: Hoover::None,
                 areas: vec![],

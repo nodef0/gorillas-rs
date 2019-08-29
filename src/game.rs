@@ -1,5 +1,5 @@
 use crate::game_constants::*;
-use crate::{GameConfig, SharedAssets, SharedData};
+use crate::{GameConfig, Player, SharedAssets, SharedData};
 
 use crate::ws::ClientImpl;
 
@@ -37,12 +37,12 @@ struct Bot {
 enum Collision {
     None,
     Sky,
-    Buildings(Vec<usize>),
+    Rectangles(Vec<usize>),
     Player(Side, Vec<usize>),
 }
 
 struct Round {
-    buildings: Vec<Building>,
+    buildings: Vec<Rectangle>,
     gorilla_left: Rectangle,
     gorilla_right: Rectangle,
     wind: Vector,
@@ -76,11 +76,6 @@ pub struct Game {
     client: Option<ClientImpl>,
     delta_base: Option<(u32, Vec<u8>)>,
     delta_last: Option<(u32, Option<Vec<u8>>)>,
-}
-
-struct Building {
-    bound_box: Rectangle,
-    tiles: Vec<usize>, // indicies into the tilemap
 }
 
 impl Bot {
@@ -122,7 +117,7 @@ impl Bot {
 
 impl Round {
     fn new(pools: &mut [Vec<Rectangle>]) -> Self {
-        let buildings = Building::buildings(pools);
+        let buildings = buildings(pools);
         let gorilla_left = place_gorilla(Side::Left, &buildings);
         let gorilla_right = place_gorilla(Side::Right, &buildings);
         let mut rng = rand::thread_rng();
@@ -151,42 +146,23 @@ impl Round {
     }
 }
 
-impl Building {
-    fn buildings(pools: &mut [Vec<Rectangle>]) -> Vec<Building> {
-        let mut b = vec![];
-        let mut rng = rand::thread_rng();
-        let mut last_x = 0;
-        for pool in pools {
-            let pos_y = TILE_SIZE.1 * rng.gen_range(16, 32);
-            let height = WINDOW_Y as u32 - pos_y;
-            let width = 64 + TILE_SIZE.0 * rng.gen_range(0, 3);
-            let color_offset = 8 * rng.gen_range(0, 4);
-            let mut tiles = vec![color_offset];
-            for _ in 1..width / TILE_SIZE.0 {
-                tiles.push(1 + color_offset);
-            }
-            tiles.push(2 + color_offset);
-            for _ in 1..=height / 16 {
-                tiles.push(3 + color_offset);
-                for _ in 1..width / 16 {
-                    let mid_tile = rng.gen_range(5, 8);
-                    tiles.push(mid_tile + color_offset);
-                }
-                tiles.push(4 + color_offset);
-            }
-
-            let bound_box = Rectangle::new((last_x, pos_y), (width, height));
-            pool.push(bound_box);
-
-            b.push(Building { bound_box, tiles });
-
-            last_x += width + 8;
-            if last_x > WINDOW_X as u32 {
-                break;
-            }
+fn buildings(pools: &mut [Vec<Rectangle>]) -> Vec<Rectangle> {
+    let mut b = vec![];
+    let mut rng = rand::thread_rng();
+    let mut last_x = 0;
+    for pool in pools {
+        let pos_y = TILE_SIZE.1 * rng.gen_range(16, 32);
+        let height = WINDOW_Y as u32 - pos_y;
+        let width = 64 + TILE_SIZE.0 * rng.gen_range(0, 3);
+        let bound_box = Rectangle::new((last_x, pos_y), (width, height));
+        pool.push(bound_box);
+        b.push(bound_box);
+        last_x += width + 8;
+        if last_x > WINDOW_X as u32 {
+            break;
         }
-        b
     }
+    b
 }
 
 fn from_delta(delta: &[u8], base: &[u8]) -> Vec<u8> {
@@ -219,14 +195,14 @@ fn next_side(side: Side) -> Side {
     }
 }
 
-fn place_gorilla(side: Side, buildings: &[Building]) -> Rectangle {
+fn place_gorilla(side: Side, buildings: &[Rectangle]) -> Rectangle {
     let field_length = buildings.len() - 1;
     let mut rng = rand::thread_rng();
     let i = match side {
         Side::Left => rng.gen_range(1, (field_length / 2) - DISTANCE_MIN),
         Side::Right => rng.gen_range((field_length / 2) + DISTANCE_MIN, field_length),
     };
-    let b = buildings[i].bound_box;
+    let b = buildings[i];
     Rectangle::new(
         (
             b.center().x - GORILLA_SIZE.0 as f32 / 2.0,
@@ -252,9 +228,9 @@ fn remove_parts(circle: &Circle, parts: &mut Vec<Rectangle>) {
     }
 }
 
-fn collide_buildings(circle: Circle, buildings: &[Building], parts: &[Vec<Rectangle>]) -> bool {
+fn collide_buildings(circle: Circle, buildings: &[Rectangle], parts: &[Vec<Rectangle>]) -> bool {
     for (i, building) in buildings.iter().enumerate() {
-        if circle.overlaps(&building.bound_box) {
+        if circle.overlaps(building) {
             match parts[i].len() {
                 1 => return true,
                 _ => {
@@ -271,10 +247,10 @@ fn collide_buildings(circle: Circle, buildings: &[Building], parts: &[Vec<Rectan
 }
 
 // returns the index of the buildings affected by the shot
-fn collide_shot(circle: Circle, buildings: &[Building], parts: &[Vec<Rectangle>]) -> Vec<usize> {
+fn collide_shot(circle: Circle, buildings: &[Rectangle], parts: &[Vec<Rectangle>]) -> Vec<usize> {
     let mut v = vec![];
     for (i, building) in buildings.iter().enumerate() {
-        if circle.overlaps(&building.bound_box) {
+        if circle.overlaps(building) {
             match parts[i].len() {
                 1 => v.push(i),
                 _ => {
@@ -326,16 +302,12 @@ impl Game {
     pub fn new(config: GameConfig, pools: &mut [Vec<Rectangle>]) -> Result<Self> {
         let (tx, rx) = channel();
         let round = Round::new(pools);
-        let bot_left = if config.bot_left {
-            Some(Bot::new(Side::Left, &round))
-        } else {
-            None
+        let into_bot = |player, side| match player {
+            Player::Bot => Some(Bot::new(side, &round)),
+            _ => None,
         };
-        let bot_right = if config.bot_right {
-            Some(Bot::new(Side::Right, &round))
-        } else {
-            None
-        };
+        let bot_left = into_bot(config.left, Side::Left);
+        let bot_right = into_bot(config.right, Side::Right);
 
         Ok(Game {
             round,
@@ -370,7 +342,7 @@ impl Game {
         let hits = collide_buildings(circle, &self.round.buildings, parts);
         let explosion = Circle::new(circle.pos, circle.radius * 4.0);
         if hits {
-            Collision::Buildings(collide_shot(explosion, &self.round.buildings, parts))
+            Collision::Rectangles(collide_shot(explosion, &self.round.buildings, parts))
         } else if collide_field(circle.pos) {
             Collision::Sky
         } else if collide_player(circle, &self.round.gorilla_left) {
@@ -448,16 +420,17 @@ impl Game {
                     Ok(())
                 })?;
                 shared.building_tiles.borrow_mut().execute(|img| {
+                    let mut rng = rand::thread_rng();
                     for b in self.round.buildings.iter() {
-                        let origin = b.bound_box.pos
+                        let origin = b.pos
                             - Vector {
                                 x: TILE_SIZE.0 as f32 / 2.0,
                                 y: 0.0,
                             };
-                        let tiles_in_x = b.bound_box.size.x as u32 / TILE_SIZE.0 + 1;
-                        for (i, tile) in b.tiles.iter().enumerate() {
-                            let tile = *tile as u32;
-                            let i = i as u32;
+                        let tiles_in_x = b.size.x as u32 / TILE_SIZE.0 + 1;
+
+                        let mut i: u32 = 0;
+                        let mut draw_tile = |tile: u32| {
                             let tile_x = (tile % 4) * TILE_SIZE.0;
                             let tile_y = (tile / 4) * TILE_SIZE.1;
 
@@ -469,6 +442,25 @@ impl Game {
                                 Transform::IDENTITY,
                                 1.0,
                             );
+                            i += 1;
+                        };
+
+                        let color_offset = 8 * rng.gen_range(0, 4);
+                        let width = b.size.x as u32;
+                        let height = b.size.y as u32;
+
+                        draw_tile(color_offset);
+                        for _ in 1..width / TILE_SIZE.0 {
+                            draw_tile(1 + color_offset);
+                        }
+                        draw_tile(2 + color_offset);
+                        for _ in 1..=height / 16 {
+                            draw_tile(3 + color_offset);
+                            for _ in 1..width / 16 {
+                                let mid_tile = rng.gen_range(5, 8);
+                                draw_tile(mid_tile + color_offset);
+                            }
+                            draw_tile(4 + color_offset);
                         }
                     }
                     Ok(())
@@ -700,7 +692,6 @@ impl Game {
         self.shot.is_some() || self.explosion_state.is_some()
     }
 
-
     fn update_network(&mut self) -> Option<WireState> {
         let mut last_state = None;
         let mut packet_data = vec![];
@@ -739,9 +730,11 @@ impl Game {
             }
             last_state = Some(s);
         }
-        let m = last_state?; 
+        let m = last_state?;
         let packet: WireStatePacket = bincode::deserialize(&m).unwrap();
-        DeflateDecoder::new(&packet.data[..]).read_to_end(&mut packet_data).ok()?; 
+        DeflateDecoder::new(&packet.data[..])
+            .read_to_end(&mut packet_data)
+            .ok()?;
 
         let client_ack = packet.seq.1;
 
@@ -759,9 +752,11 @@ impl Game {
     }
 
     pub fn update(&mut self, data: &mut SharedData, window: &mut Window) -> Result<()> {
-        self.update_network().map(|s| {
-            self.client.as_ref().map(|c| c.on_console(&format!("{:?}", s)));
-        });
+        if let Some(s) = self.update_network() {
+            if let Some(c) = self.client.as_ref() {
+                c.on_console(&format!("{:?}", s));
+            }
+        };
 
         let gorilla = self.gorilla_from_side(self.turn);
         let center = gorilla.pos + (gorilla.size / 2);
@@ -822,7 +817,7 @@ impl Game {
                     self.new_game = Some(next_side(side));
                     self.round.render_score = true;
                 }
-                Collision::Buildings(xs) => {
+                Collision::Rectangles(xs) => {
                     self.update_aim(pos);
                     self.destroy_terrain(&circle, xs, &mut data.parts);
                     self.on_explode(data, pos, None);
